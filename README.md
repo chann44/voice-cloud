@@ -29,6 +29,7 @@ Voice Cloud is being built in Go for self-hosted deployments, with support for v
 | `db` | SQLite migrations and queries |
 | `docker` | Compose stack for the backend and console |
 | `docs` | Guides for the API, worker, providers, users, and Docker |
+| `examples` | Runnable TypeScript, Python, and curl integrations |
 
 ## Run it
 
@@ -47,6 +48,9 @@ then mint a router key to send chat, text-to-speech, or transcription requests.
 The [inference guide](docs/inference.md) covers endpoints, streaming, fallback,
 credentials, and usage records. Native provider protocols and WebSocket/realtime
 sessions remain future work; a seeded provider entry does not imply adapter support.
+
+See [application examples](examples/README.md) for TypeScript and Python chat,
+transcription, speech, and recorded voice-assistant flows, plus curl requests.
 
 ## Landing page
 
