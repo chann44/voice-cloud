@@ -53,7 +53,9 @@
 			>
 				<EmptyState
 					title="No traffic"
-					description="Inference and activity recording are not implemented yet."
+					description="Send a model request with a router API key to see traffic here."
+					href="/quickstart"
+					action="Send your first request"
 				/>
 			</div>{/if}
 	</section>
@@ -100,7 +102,9 @@
 			</table>
 		</div>{:else}<EmptyState
 			title="No requests"
-			description="Requests will appear when activity recording is available."
+			description="Model requests appear here with their status and duration."
+			href="/quickstart"
+			action="Send your first request"
 		/>{/if}
 </section>
 

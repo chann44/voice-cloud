@@ -22,7 +22,7 @@ export const configFields: Record<string, ConfigField[]> = {
 			key: 'credential_ref',
 			label: 'Credential reference',
 			optional: true,
-			help: 'Name of an external secret, not the secret itself. Resolution is not implemented yet.',
+			help: 'Environment variable name in the API process containing the provider key. Do not enter the key itself.',
 		},
 		{ key: 'enabled', label: 'Enabled', kind: 'boolean', initial: 'true' },
 	],

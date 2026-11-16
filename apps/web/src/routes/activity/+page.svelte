@@ -77,7 +77,9 @@
 		</table>
 	</div>{:else}<EmptyState
 		title="No requests"
-		description="Inference and activity recording are not implemented yet. Existing records will appear here."
+		description="Send a model request with a router API key. If you have applied filters, clear them to see other requests on this page."
+		href="/quickstart"
+		action="Quickstart"
 	/>{/if}
 <div class="flex items-center justify-between mt-3">
 	<span class="eyebrow"
@@ -139,6 +141,14 @@
 								? `${attempt.first_output_at - attempt.started_at}ms`
 								: '—'}
 						</p>
+						<p class="muted text-[10px]">
+							Duration: {attempt.finished_at !== null
+								? `${attempt.finished_at - attempt.started_at}ms`
+								: '—'}
+						</p>
+						{#if attempt.provider_request_id}<p class="muted text-[10px] break-all">
+								Provider request: {attempt.provider_request_id}
+							</p>{/if}
 					</div>{:else}<p class="muted">No attempts</p>{/each}
 				<h2 class="section mb-3">Usage</h2>
 				{#each data.usage as usage}<div class="panel panel-body mb-2">

@@ -22,7 +22,7 @@ Voice Cloud is being built in Go for self-hosted deployments, with support for v
 
 | Path | What it is |
 | --- | --- |
-| `apps/api` | Go management API |
+| `apps/api` | Go management and inference API |
 | `apps/worker` | Go background worker: deployment health checks and cleanup |
 | `apps/web` | The console (SvelteKit) |
 | `apps/site` | The landing page (static SvelteKit) |
@@ -41,6 +41,12 @@ docker compose -f docker/compose.yml up --build -d
 The console is at `http://localhost:3000` and the API at `http://localhost:8080`.
 Open the console to create the first administrator. See [the Docker guide](docs/docker.md)
 for development mode and [the API guide](docs/api.md) for running without Docker.
+
+Configure an OpenAI-compatible connection, model, deployment, and routing policy,
+then mint a router key to send chat, text-to-speech, or transcription requests.
+The [inference guide](docs/inference.md) covers endpoints, streaming, fallback,
+credentials, and usage records. Native provider protocols and WebSocket/realtime
+sessions remain future work; a seeded provider entry does not imply adapter support.
 
 ## Landing page
 

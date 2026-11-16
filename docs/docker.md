@@ -36,6 +36,36 @@ container restarts, rebuilds, and `docker compose down` preserve it. `down -v`
 deletes the volume and its data. Seeding inserts missing provider names without
 replacing existing configuration. Seeded providers remain disabled.
 
+## Provider credentials
+
+Pass only the provider secrets you configure to the backend. For example, create
+an untracked `docker/providers.compose.yml` file:
+
+```yaml
+services:
+  backend:
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in your shell}
+```
+
+Set `OPENAI_API_KEY` in your shell and start with both Compose files:
+
+```sh
+docker compose -f docker/compose.yml -f docker/providers.compose.yml up --build -d
+```
+
+Set the connection's `credential_ref` to `OPENAI_API_KEY`, not the secret value.
+The variable is resolved by the API process; a variable on the host alone is not
+available inside the container. Add further named variables to this override as
+needed. Do not commit secret files or place provider credentials in frontend build
+variables. [Inference](inference.md) requires an OpenAI-compatible endpoint; the
+provider catalog includes entries whose native protocols are not implemented.
+
+For a model server on your Docker Desktop host, use `host.docker.internal` as its
+hostname; `localhost` inside the backend means that container. Configure reverse
+proxies to permit 32 MiB request bodies, a five-minute request duration, and
+unbuffered streaming responses.
+
 For database maintenance, override the backend command, for example:
 
 ```sh

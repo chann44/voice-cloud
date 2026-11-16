@@ -79,6 +79,7 @@ export type Attempt = {
 	request_id: string;
 	deployment_id: number;
 	attempt_number: number;
+	provider_request_id: string | null;
 	status: string;
 	started_at: number;
 	first_output_at: number | null;

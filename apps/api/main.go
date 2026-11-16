@@ -32,7 +32,7 @@ func run(ctx context.Context) error {
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
-	server := &http.Server{Addr: address, Handler: newHandler(database, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: address, Handler: newHandler(database, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 60 * time.Second}
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.ListenAndServe() }()
 	slog.Info("API listening", "address", address)

@@ -51,7 +51,8 @@ invalid probe settings produce `unknown` without sending a network request.
 
 ## Read health
 
-`GET /v1/deployments/{id}/health` requires the admin bearer token. For example:
+`GET /v1/deployments/{id}/health` requires management authentication (a user
+session or the optional legacy admin token). For example:
 
 ```json
 {
@@ -75,7 +76,10 @@ Shutdown cancellation does not overwrite health with a network failure.
 Error codes include `not_checked`, `not_configured`, `unsupported_probe`,
 `invalid_config`, `disabled`, `config_changed`, `stale`, `network_error`, `timeout`,
 and `http_status_<code>`. A successful reachability check is not proof that a
-model can complete inference. Routing does not consume these results yet.
+model can complete inference. Routing excludes fresh unhealthy deployments and
+can rank or constrain candidates using fresh healthy latency measurements.
+Unknown health remains eligible unless a latency constraint requires a measurement;
+see [routing policies](inference.md#policies-and-fallback).
 
 This version assumes one worker per installation. It has no Redis, job queue,
 distributed leases, async transcription, webhook delivery, or log-retention job.

@@ -20,15 +20,17 @@ Rime, Smallest AI, Soniox, Speechify, Speechmatics, Together, and xAI.
 Google and Gemini retain separate adapter IDs, matching Speko's distinct routes.
 
 These entries occupy `connections`; a connection is a configured provider account
-or endpoint, not a model. Seeded `adapter` values identify the intended future
-adapter, and `credential_ref` contains an external secret name, never a key value.
-All seed entries are disabled. Provider inference and credential resolution are
-not implemented yet; adding or enabling a connection does not implement them.
+or endpoint, not a model. Seeded `adapter` values identify a protocol adapter,
+and `credential_ref` contains an environment variable name, never a key value.
+All seed entries are disabled. Inference currently supports OpenAI-compatible
+HTTP through `openai`, `openai-compatible`, `local`, `custom`, and `whisper`.
+Other seeded adapters require future protocol implementations; enabling one does
+not make its native provider API compatible. See [the inference guide](inference.md).
 
-Base URLs identify provider origins. They are not complete speech, LLM, or
-WebSocket routes; adapters will select the appropriate path and may need separate
-hosts for different modalities. Azure's URL requires your resource name. Local
-and Custom URLs are placeholders to replace with your actual endpoint.
+Base URLs identify provider API roots, optionally ending in `/v1`. They are not
+complete speech or LLM routes; the compatible adapter appends the endpoint path.
+Azure's seeded URL requires your resource name and its native protocol is not
+implemented. Local and Custom URLs are placeholders to replace with your actual endpoint.
 Review provider-specific authentication and deployment settings before use.
 
 Seeding inserts missing names in one transaction. Repeating it preserves existing
@@ -54,7 +56,9 @@ ones using `POST /v1/connections`, without editing a fixed provider allowlist:
 
 For a custom hosted endpoint, use your own name and base URL, `adapter: "custom"`,
 and `location_kind: "cloud"`. An optional `credential_ref` can name the external
-credential. Adapter identifiers are not restricted to the seeded list.
+credential. Adapter identifiers are not restricted at configuration time, but
+inference rejects unsupported adapters. The API process must receive the named
+environment variable; see [Docker credentials](docker.md#provider-credentials).
 
 Create the model through `POST /v1/models`, then link it to the connection through
 `POST /v1/deployments` with its actual `upstream_model_id`. STT, TTS, and LLM are

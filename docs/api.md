@@ -15,7 +15,7 @@ The API defaults to `127.0.0.1:8080`. Override `API_ADDR` and `DB_PATH` as neede
 The web server uses private `API_URL` (default `http://127.0.0.1:8080`); Compose
 sets it to `http://backend:8080`. No API credential is built into frontend assets.
 
-Authenticate API calls with a user session bearer token returned by login/signup:
+Authenticate management API calls with a user session bearer token returned by login/signup:
 
 ```sh
 curl http://127.0.0.1:8080/v1/auth/login \
@@ -65,14 +65,16 @@ name; configuration and member creation require an administrator.
 | `/v1/requests/{request}/attempts` | GET | List provider attempts in order |
 | `/v1/requests/{request}/usage` | GET | List usage across all attempts |
 
-This is the configuration and observability API. The worker records deployment
-health; see [the worker guide](worker.md) for probe configuration. Provider
-inference, streaming, and activity recording are not implemented yet. There are no public
+This is the configuration and observability API. Inference uses separate router
+key authentication at `/v1/chat/completions`, `/v1/audio/speech`, and
+`/v1/audio/transcriptions`; see [the inference guide](inference.md). Inference
+records request history, attempts, and usage. The worker records deployment health;
+see [the worker guide](worker.md) for probe configuration. There are no public
 endpoints for fabricating or deleting activity records.
 
 ## Request and response conventions
 
-POST and PUT bodies use `Content-Type: application/json`. The maximum body is
+Management POST and PUT bodies use `Content-Type: application/json`. The maximum body is
 1 MiB; unknown fields and trailing JSON are rejected. Language PUT has no body.
 Create returns 201, reads and replacements return 200, and delete/revoke returns
 204. PUT replaces editable fields; it does not merge them.
@@ -91,8 +93,9 @@ Model and policy tasks cannot be changed. A deployment's model, connection, and
 upstream model ID cannot be changed; create another deployment for a different
 route. This preserves policy compatibility and historical route identity.
 Policy targets must match the policy task. Capabilities, pricing, settings, and
-constraints currently accept arbitrary JSON objects; adapters will validate their
-provider-specific contents when inference is implemented.
+constraints accept JSON objects at configuration time. Inference supports only
+the [documented routing constraints and pricing fields](inference.md#policies-and-fallback);
+unsupported constraints fail routing.
 
 ## Configure a route
 
@@ -132,8 +135,9 @@ The example IDs assume a fresh database; use the IDs returned by each response.
 Connections/deployments default to enabled. Policies default to balanced routing,
 fallback enabled, and two attempts. Supply `enabled:false` or
 `fallback_enabled:false` to disable them. Missing JSON settings default to `{}`.
-Provider secrets stay outside the database; `credential_ref` is an optional
-external secret name, such as an environment variable name. It is not resolved yet.
+Provider secrets stay outside the database; `credential_ref` optionally names an
+environment variable in the API process. Its value becomes the upstream bearer
+credential. See [provider credentials](inference.md#connections-and-credentials).
 
 Router key creation accepts a name, optional default policy ID, and optional
 future `expires_at` timestamp. It returns `{"key":"vc_...","api_key":{...}}`.
