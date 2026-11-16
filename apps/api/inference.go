@@ -78,7 +78,8 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	if input.stream {
 		transport = "sse"
 	}
-	snapshot, err := json.Marshal(map[string]any{"model": input.model, "policy": policyJSON(policy), "deployment_ids": deploymentIDs(deployments)})
+	snapshotValue := map[string]any{"model": input.model, "policy": policyJSON(policy), "deployment_ids": deploymentIDs(deployments)}
+	snapshot, err := json.Marshal(snapshotValue)
 	if err != nil {
 		return err
 	}
@@ -118,6 +119,23 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	if _, err = a.queries.StartRequest(ctx, id); err != nil {
 		return err
 	}
+	decision := routeDecision{Status: "disabled"}
+	if policy.ID != 0 && policy.DecisionJson != "{}" {
+		deployments, decision = a.decideRoute(ctx, policy, input, deployments)
+		if ctx.Err() != nil {
+			code = "timeout"
+			return httpError{504, "inference cancelled or timed out"}
+		}
+		snapshotValue["decision"] = decision
+		snapshotValue["deployment_ids"] = deploymentIDs(deployments)
+		snapshot, err = json.Marshal(snapshotValue)
+		if err != nil {
+			return err
+		}
+		if _, err = a.queries.SetRequestRoutingSnapshot(ctx, db.SetRequestRoutingSnapshotParams{ID: id, RoutingSnapshotJson: string(snapshot)}); err != nil {
+			return err
+		}
+	}
 	attempts := policy.MaxAttempts
 	if policy.FallbackEnabled != 1 {
 		attempts = 1
@@ -130,7 +148,14 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		_, err = a.queries.CreateAttempt(ctx, db.CreateAttemptParams{ID: attemptID, RequestID: id, DeploymentID: deployment.ID, AttemptNumber: int64(index + 1), StartedAt: time.Now().UnixMilli(), SelectionReason: "policy_priority_" + policy.Objective})
+		reason := "policy_priority_" + policy.Objective
+		if decision.Status == "selected" {
+			reason = "decision_selected"
+			if index > 0 {
+				reason = "decision_fallback_" + policy.Objective
+			}
+		}
+		_, err = a.queries.CreateAttempt(ctx, db.CreateAttemptParams{ID: attemptID, RequestID: id, DeploymentID: deployment.ID, AttemptNumber: int64(index + 1), StartedAt: time.Now().UnixMilli(), SelectionReason: reason})
 		if err != nil {
 			return err
 		}

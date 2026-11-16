@@ -38,7 +38,12 @@ export const configFields: Record<string, ConfigField[]> = {
 		{ key: 'connection_id', label: 'Provider connection', kind: 'select', immutable: true },
 		{ key: 'upstream_model_id', label: 'Upstream model ID', immutable: true },
 		{ key: 'enabled', label: 'Enabled', kind: 'boolean', initial: 'true' },
-		{ key: 'capabilities_json', label: 'Capabilities', kind: 'json' },
+		{
+			key: 'capabilities_json',
+			label: 'Capabilities',
+			kind: 'json',
+			help: 'Decision-assisted LLM routing requires a nonblank routing_description on every eligible deployment (up to 2,000 UTF-8 bytes each). Describe its specialization using measured facts; the router does not infer quality scores.',
+		},
 		{ key: 'pricing_json', label: 'Pricing', kind: 'json' },
 		{
 			key: 'settings_json',
@@ -59,5 +64,11 @@ export const configFields: Record<string, ConfigField[]> = {
 		{ key: 'fallback_enabled', label: 'Enable fallback', kind: 'boolean', initial: 'true' },
 		{ key: 'max_attempts', label: 'Maximum attempts', kind: 'number', initial: '2' },
 		{ key: 'constraints_json', label: 'Constraints', kind: 'json' },
+		{
+			key: 'decision_json',
+			label: 'Decision model',
+			kind: 'json',
+			help: 'LLM policies only. {} disables this. To enable, set url, model, and optional credential_ref, timeout_ms (default 500), min_confidence (default 0.6). This sends text messages to the decision service and may add latency and charges. Secrets stay in the API environment.',
+		},
 	],
 };

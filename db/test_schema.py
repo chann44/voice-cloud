@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import subprocess
 import tempfile
@@ -63,6 +64,24 @@ class SchemaTest(unittest.TestCase):
             self.db.execute(query, ('duplicate', 1))
         self.db.execute(query, ('other-client', 2))
 
+    def test_policy_decisions_default_to_disabled_and_round_trip(self):
+        self.assertEqual(self.db.execute(
+            'SELECT decision_json FROM routing_policies WHERE id = 1'
+        ).fetchone(), ('{}',))
+        decision = {
+            'url': 'https://api.typesafe.ai/v1/systemone',
+            'model': 'jev-latest',
+            'credential_ref': 'TYPESAFE_API_KEY',
+            'timeout_ms': 500,
+            'min_confidence': 0.6,
+        }
+        self.db.execute('UPDATE routing_policies SET decision_json = ? WHERE id = 1',
+                        (json.dumps(decision),))
+        stored = self.db.execute(
+            'SELECT decision_json FROM routing_policies WHERE id = 1'
+        ).fetchone()[0]
+        self.assertEqual(json.loads(stored), decision)
+
     def test_invalid_data_is_rejected(self):
         statements = [
             "UPDATE deployments SET capabilities_json = '[]'",
@@ -70,6 +89,10 @@ class SchemaTest(unittest.TestCase):
             "UPDATE deployments SET connection_id = 999",
             "UPDATE connections SET enabled = 2",
             "UPDATE routing_policies SET max_attempts = 0",
+            "UPDATE routing_policies SET decision_json = '[]'",
+            "UPDATE routing_policies SET decision_json = 'null'",
+            "UPDATE routing_policies SET decision_json = 'invalid'",
+            "UPDATE routing_policies SET decision_json = NULL",
             "UPDATE requests SET task = 'invalid'",
             "UPDATE requests SET finished_at = 999",
             "UPDATE requests SET request_fingerprint = NULL",

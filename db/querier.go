@@ -79,6 +79,7 @@ type Querier interface {
 	SetAttemptProviderRequestID(ctx context.Context, arg SetAttemptProviderRequestIDParams) (int64, error)
 	SetDeploymentHealth(ctx context.Context, arg SetDeploymentHealthParams) (int64, error)
 	SetPolicyTarget(ctx context.Context, arg SetPolicyTargetParams) error
+	SetRequestRoutingSnapshot(ctx context.Context, arg SetRequestRoutingSnapshotParams) (int64, error)
 	SetUserStatus(ctx context.Context, arg SetUserStatusParams) (int64, error)
 	StartRequest(ctx context.Context, id string) (int64, error)
 	UpdateAPIKey(ctx context.Context, arg UpdateAPIKeyParams) (ApiKey, error)

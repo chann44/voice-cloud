@@ -49,6 +49,10 @@ The [inference guide](docs/inference.md) covers endpoints, streaming, fallback,
 credentials, and usage records. Native provider protocols and WebSocket/realtime
 sessions remain future work; a seeded provider entry does not imply adapter support.
 
+LLM policies can opt into [decision-assisted routing](docs/inference.md#decision-assisted-llm-routing)
+with Jev or another TypeSafe Choice-compatible service. The model chooses among
+eligible deployments; unavailable or uncertain decisions keep the policy's normal order.
+
 See [application examples](examples/README.md) for TypeScript and Python chat,
 transcription, speech, and recorded voice-assistant flows, plus curl requests.
 

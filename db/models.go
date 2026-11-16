@@ -133,6 +133,7 @@ type RoutingPolicy struct {
 	ConstraintsJson string `json:"constraints_json"`
 	CreatedAt       int64  `json:"created_at"`
 	UpdatedAt       int64  `json:"updated_at"`
+	DecisionJson    string `json:"decision_json"`
 }
 
 type User struct {

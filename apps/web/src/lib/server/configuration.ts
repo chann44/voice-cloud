@@ -58,6 +58,7 @@ export function configurationActions(resource: (event: RequestEvent) => string) 
 						fallback_enabled: form.has('fallback_enabled'),
 						max_attempts: Number(text('max_attempts')),
 						constraints_json: object('constraints_json'),
+						decision_json: object('decision_json'),
 					};
 				await api(event, `${kind}${id ? '/' + id : ''}`, {
 					method: id ? 'PUT' : 'POST',

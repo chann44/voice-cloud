@@ -96,7 +96,7 @@ Supported `constraints_json` fields are:
 healthy latency measurement within the limit. Unsupported or invalid constraints
 fail routing rather than being silently ignored.
 
-Target priority is primary, with lower values first. Within equal priorities,
+Without decision assistance, target priority is primary, with lower values first. Within equal priorities,
 `latency` prefers fresh lower measured latency; `cost` prefers lower configured
 `pricing_json.request_nanos`. Unknown measurements or prices rank last.
 `balanced` and `quality` follow target priority and deployment ID; quality is
@@ -107,6 +107,104 @@ once each. Unavailable credentials, unsupported adapters, invalid connection
 configuration, network failures, and upstream HTTP 408, 429, or 5xx responses
 allow fallback. Other upstream failures stop the request. Disabling fallback
 limits the request to one attempt. A failed attempt may still incur provider charges.
+
+## Decision-assisted LLM routing
+
+An LLM policy can optionally ask a decision model to choose its first deployment
+for each request. The application keeps sending `model: "policy:<id>"`; no client
+change is needed. Empty `decision_json` (`{}`), including its default on existing
+policies, disables this behavior. STT and TTS continue to use deterministic routing.
+
+Configure the policy's **Decision model** field in the console, or send
+`decision_json` through the management API:
+
+```json
+{
+  "url": "https://api.typesafe.ai/v1/systemone",
+  "model": "jev-latest",
+  "credential_ref": "TYPESAFE_API_KEY",
+  "timeout_ms": 500,
+  "min_confidence": 0.6
+}
+```
+
+This uses the [TypeSafe System One Choice protocol](https://docs.typesafe.ai/primitives/choice):
+the router supplies eligible deployment options, and the service returns a choice
+and confidence. Jev is supported through this protocol; another decision service
+must implement the same wire format. A general OpenAI chat endpoint is not a
+compatible decision endpoint.
+
+`url` is the complete HTTP(S) endpoint, without user credentials, a query, or a
+fragment. `model` selects the decision model. `credential_ref` optionally names an
+API-process environment variable whose value becomes the decision service's
+bearer token. An absent reference sends no token, which can be useful for a local
+decision endpoint. A configured reference must resolve to a value. Never put a
+secret in the JSON. The [Docker credential override](docker.md#provider-credentials)
+can pass `TYPESAFE_API_KEY` to the API process. `timeout_ms` defaults to 500 and
+accepts 50–5,000; `min_confidence` defaults to 0.6 and accepts 0–1.
+
+Enabling this policy sends plain-text message roles and content to the configured
+decision service, including system prompts and any sensitive text in those
+messages, in addition to the generation provider. Other message fields are not
+sent. The decision step adds latency and may incur a separate charge. Requests
+with tools/functions, tool calls, or non-string message content bypass it; images,
+audio, and tool arguments are never sent to the decision service. Text context
+larger than 16 KiB after serialization also uses the deterministic route instead.
+The entire decision payload is capped at 64 KiB, with at most 255 candidates;
+candidate names and upstream model identifiers must each fit in 500 UTF-8 bytes.
+Exceeding these limits also keeps the deterministic route.
+Choose the endpoint according to your application's data requirements.
+
+Every eligible deployment must have a nonblank `routing_description` in its
+**Capabilities**, otherwise the request keeps its deterministic route. For a fast
+general-purpose deployment, an operator description might be:
+
+```json
+{"routing_description":"Small local model for short English FAQ answers; not evaluated for complex reasoning."}
+```
+
+For a deployment evaluated for more demanding reasoning:
+
+```json
+{"routing_description":"Larger reasoning model evaluated on our multi-step technical questions; use for those tasks when the extra latency and cost are acceptable."}
+```
+
+Adapt these descriptions to your own results. Each `routing_description` can
+contain up to 2,000 UTF-8 bytes. The decision receives
+these descriptions, model identifiers, and configured pricing information. It does
+not invent benchmark results, train a router, or establish which model is best.
+Use descriptions supported by your own evaluations, then compare the policy's
+cost, latency, and answer quality against a fixed-deployment baseline.
+
+Hard task, language, health, and policy constraints filter candidates first. The
+decision can choose any remaining target, even one with a lower configured
+priority. That deployment moves first; the other targets retain their original
+deterministic order for fallback. `max_attempts` and `fallback_enabled` still
+control generation attempts. Explicit `deployment:<id>` requests and policies
+with only one eligible deployment bypass the decision call.
+
+Timeouts, low confidence, unavailable credentials, and invalid decisions keep the
+deterministic order. A returned choice cannot introduce a deployment outside the
+eligible set. The router records decision metadata in the request's routing
+snapshot, and the attempt selection reason identifies decision-assisted routing.
+Metadata includes status, configured and returned model identifiers, chosen
+deployment, confidence, decision latency, and token usage when reported. It stores
+no prompt text. Decision-service charges are not included in provider attempt
+usage or its cost estimate.
+
+For an existing LLM policy, read its current fields before replacing it. For
+example, if policy 1 has the following editable values:
+
+```sh
+curl -X PUT http://localhost:8080/v1/policies/1 \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"App chat","task":"llm","objective":"balanced","fallback_enabled":true,"max_attempts":2,"constraints_json":{},"decision_json":{"url":"https://api.typesafe.ai/v1/systemone","model":"jev-latest","credential_ref":"TYPESAFE_API_KEY","timeout_ms":500,"min_confidence":0.6}}'
+```
+
+Use the policy's actual ID and preserve its existing name, objective, constraints,
+and fallback settings. PUT replaces editable fields; omitting `decision_json`
+resets it to `{}`. To disable the decision call, save `{}` in that field.
 
 ## Streaming and limits
 

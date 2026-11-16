@@ -65,8 +65,8 @@ SELECT * FROM deployment_languages WHERE deployment_id = ? ORDER BY language_tag
 DELETE FROM deployment_languages WHERE deployment_id = ? AND language_tag = ?;
 
 -- name: CreateRoutingPolicy :one
-INSERT INTO routing_policies (name, task, objective, fallback_enabled, max_attempts, constraints_json)
-VALUES (?, ?, ?, ?, ?, ?) RETURNING *;
+INSERT INTO routing_policies (name, task, objective, fallback_enabled, max_attempts, constraints_json, decision_json)
+VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: GetRoutingPolicy :one
 SELECT * FROM routing_policies WHERE id = ?;
@@ -76,7 +76,7 @@ SELECT * FROM routing_policies ORDER BY name, id;
 
 -- name: UpdateRoutingPolicy :one
 UPDATE routing_policies SET name = ?, task = ?, objective = ?, fallback_enabled = ?,
-    max_attempts = ?, constraints_json = ?, updated_at = ?
+    max_attempts = ?, constraints_json = ?, decision_json = ?, updated_at = ?
 WHERE id = ? RETURNING *;
 
 -- name: DeleteRoutingPolicy :execrows
@@ -297,3 +297,6 @@ ON CONFLICT (deployment_id) DO UPDATE SET
     latency_ms = excluded.latency_ms, error_code = excluded.error_code,
     config_hash = excluded.config_hash
 WHERE excluded.checked_at >= deployment_health.checked_at;
+
+-- name: SetRequestRoutingSnapshot :execrows
+UPDATE requests SET routing_snapshot_json = ? WHERE id = ? AND status = 'running';

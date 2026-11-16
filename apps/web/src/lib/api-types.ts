@@ -49,6 +49,7 @@ export type Policy = {
 	fallback_enabled: boolean;
 	max_attempts: number;
 	constraints_json: Record<string, unknown>;
+	decision_json: Record<string, unknown>;
 };
 export type APIKey = {
 	id: number;

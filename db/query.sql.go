@@ -385,8 +385,8 @@ func (q *Queries) CreateRequest(ctx context.Context, arg CreateRequestParams) (R
 }
 
 const createRoutingPolicy = `-- name: CreateRoutingPolicy :one
-INSERT INTO routing_policies (name, task, objective, fallback_enabled, max_attempts, constraints_json)
-VALUES (?, ?, ?, ?, ?, ?) RETURNING id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at
+INSERT INTO routing_policies (name, task, objective, fallback_enabled, max_attempts, constraints_json, decision_json)
+VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json
 `
 
 type CreateRoutingPolicyParams struct {
@@ -396,6 +396,7 @@ type CreateRoutingPolicyParams struct {
 	FallbackEnabled int64  `json:"fallback_enabled"`
 	MaxAttempts     int64  `json:"max_attempts"`
 	ConstraintsJson string `json:"constraints_json"`
+	DecisionJson    string `json:"decision_json"`
 }
 
 func (q *Queries) CreateRoutingPolicy(ctx context.Context, arg CreateRoutingPolicyParams) (RoutingPolicy, error) {
@@ -406,6 +407,7 @@ func (q *Queries) CreateRoutingPolicy(ctx context.Context, arg CreateRoutingPoli
 		arg.FallbackEnabled,
 		arg.MaxAttempts,
 		arg.ConstraintsJson,
+		arg.DecisionJson,
 	)
 	var i RoutingPolicy
 	err := row.Scan(
@@ -418,6 +420,7 @@ func (q *Queries) CreateRoutingPolicy(ctx context.Context, arg CreateRoutingPoli
 		&i.ConstraintsJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DecisionJson,
 	)
 	return i, err
 }
@@ -986,7 +989,7 @@ func (q *Queries) GetRequestByIdempotencyKey(ctx context.Context, arg GetRequest
 }
 
 const getRoutingPolicy = `-- name: GetRoutingPolicy :one
-SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at FROM routing_policies WHERE id = ?
+SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json FROM routing_policies WHERE id = ?
 `
 
 func (q *Queries) GetRoutingPolicy(ctx context.Context, id int64) (RoutingPolicy, error) {
@@ -1002,6 +1005,7 @@ func (q *Queries) GetRoutingPolicy(ctx context.Context, id int64) (RoutingPolicy
 		&i.ConstraintsJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DecisionJson,
 	)
 	return i, err
 }
@@ -1576,7 +1580,7 @@ func (q *Queries) ListRequests(ctx context.Context, arg ListRequestsParams) ([]R
 }
 
 const listRoutingPolicies = `-- name: ListRoutingPolicies :many
-SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at FROM routing_policies ORDER BY name, id
+SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json FROM routing_policies ORDER BY name, id
 `
 
 func (q *Queries) ListRoutingPolicies(ctx context.Context) ([]RoutingPolicy, error) {
@@ -1598,6 +1602,7 @@ func (q *Queries) ListRoutingPolicies(ctx context.Context) ([]RoutingPolicy, err
 			&i.ConstraintsJson,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DecisionJson,
 		); err != nil {
 			return nil, err
 		}
@@ -1868,6 +1873,23 @@ func (q *Queries) SetPolicyTarget(ctx context.Context, arg SetPolicyTargetParams
 	return err
 }
 
+const setRequestRoutingSnapshot = `-- name: SetRequestRoutingSnapshot :execrows
+UPDATE requests SET routing_snapshot_json = ? WHERE id = ? AND status = 'running'
+`
+
+type SetRequestRoutingSnapshotParams struct {
+	RoutingSnapshotJson string `json:"routing_snapshot_json"`
+	ID                  string `json:"id"`
+}
+
+func (q *Queries) SetRequestRoutingSnapshot(ctx context.Context, arg SetRequestRoutingSnapshotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setRequestRoutingSnapshot, arg.RoutingSnapshotJson, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setUserStatus = `-- name: SetUserStatus :execrows
 UPDATE users SET status = ?, updated_at = ? WHERE id = ?
 `
@@ -2104,8 +2126,8 @@ func (q *Queries) UpdateModel(ctx context.Context, arg UpdateModelParams) (Model
 
 const updateRoutingPolicy = `-- name: UpdateRoutingPolicy :one
 UPDATE routing_policies SET name = ?, task = ?, objective = ?, fallback_enabled = ?,
-    max_attempts = ?, constraints_json = ?, updated_at = ?
-WHERE id = ? RETURNING id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at
+    max_attempts = ?, constraints_json = ?, decision_json = ?, updated_at = ?
+WHERE id = ? RETURNING id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json
 `
 
 type UpdateRoutingPolicyParams struct {
@@ -2115,6 +2137,7 @@ type UpdateRoutingPolicyParams struct {
 	FallbackEnabled int64  `json:"fallback_enabled"`
 	MaxAttempts     int64  `json:"max_attempts"`
 	ConstraintsJson string `json:"constraints_json"`
+	DecisionJson    string `json:"decision_json"`
 	UpdatedAt       int64  `json:"updated_at"`
 	ID              int64  `json:"id"`
 }
@@ -2127,6 +2150,7 @@ func (q *Queries) UpdateRoutingPolicy(ctx context.Context, arg UpdateRoutingPoli
 		arg.FallbackEnabled,
 		arg.MaxAttempts,
 		arg.ConstraintsJson,
+		arg.DecisionJson,
 		arg.UpdatedAt,
 		arg.ID,
 	)
@@ -2141,6 +2165,7 @@ func (q *Queries) UpdateRoutingPolicy(ctx context.Context, arg UpdateRoutingPoli
 		&i.ConstraintsJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DecisionJson,
 	)
 	return i, err
 }

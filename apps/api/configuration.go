@@ -203,6 +203,7 @@ type policyBody struct {
 	FallbackEnabled *bool           `json:"fallback_enabled"`
 	MaxAttempts     *int64          `json:"max_attempts"`
 	Constraints     json.RawMessage `json:"constraints_json"`
+	Decision        json.RawMessage `json:"decision_json"`
 }
 
 func policyJSON(row db.RoutingPolicy) any {
@@ -210,7 +211,8 @@ func policyJSON(row db.RoutingPolicy) any {
 		db.RoutingPolicy
 		FallbackEnabled bool            `json:"fallback_enabled"`
 		Constraints     json.RawMessage `json:"constraints_json"`
-	}{row, row.FallbackEnabled == 1, json.RawMessage(row.ConstraintsJson)}
+		Decision        json.RawMessage `json:"decision_json"`
+	}{row, row.FallbackEnabled == 1, json.RawMessage(row.ConstraintsJson), json.RawMessage(row.DecisionJson)}
 }
 
 func (a *api) policies(w http.ResponseWriter, r *http.Request) error {
@@ -259,8 +261,14 @@ func (a *api) policies(w http.ResponseWriter, r *http.Request) error {
 		if err := object(&body.Constraints); err != nil {
 			return err
 		}
+		if err := object(&body.Decision); err != nil {
+			return err
+		}
+		if _, err := parseDecisionConfig(body.Decision, body.Task); err != nil {
+			return err
+		}
 		if id == 0 {
-			row, err := a.queries.CreateRoutingPolicy(ctx, db.CreateRoutingPolicyParams{Name: body.Name, Task: body.Task, Objective: body.Objective, FallbackEnabled: defaultEnabled(body.FallbackEnabled), MaxAttempts: attempts, ConstraintsJson: string(body.Constraints)})
+			row, err := a.queries.CreateRoutingPolicy(ctx, db.CreateRoutingPolicyParams{Name: body.Name, Task: body.Task, Objective: body.Objective, FallbackEnabled: defaultEnabled(body.FallbackEnabled), MaxAttempts: attempts, ConstraintsJson: string(body.Constraints), DecisionJson: string(body.Decision)})
 			return result(w, 201, policyJSON(row), err)
 		}
 		previous, err := a.queries.GetRoutingPolicy(ctx, id)
@@ -270,7 +278,7 @@ func (a *api) policies(w http.ResponseWriter, r *http.Request) error {
 		if previous.Task != body.Task {
 			return httpError{409, "policy task is immutable; create a new policy"}
 		}
-		row, err := a.queries.UpdateRoutingPolicy(ctx, db.UpdateRoutingPolicyParams{ID: id, Name: body.Name, Task: body.Task, Objective: body.Objective, FallbackEnabled: defaultEnabled(body.FallbackEnabled), MaxAttempts: attempts, ConstraintsJson: string(body.Constraints), UpdatedAt: time.Now().UnixMilli()})
+		row, err := a.queries.UpdateRoutingPolicy(ctx, db.UpdateRoutingPolicyParams{ID: id, Name: body.Name, Task: body.Task, Objective: body.Objective, FallbackEnabled: defaultEnabled(body.FallbackEnabled), MaxAttempts: attempts, ConstraintsJson: string(body.Constraints), DecisionJson: string(body.Decision), UpdatedAt: time.Now().UnixMilli()})
 		return result(w, 200, policyJSON(row), err)
 	}
 }

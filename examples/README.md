@@ -42,6 +42,11 @@ specific deployment, set the relevant variable to `deployment:<id>`. Policy IDs
 are examples, not seeded resources. The key's default policy is unnecessary
 because these examples select a policy explicitly for each task.
 
+To choose an LLM deployment based on each request, configure
+[decision-assisted routing](../docs/inference.md#decision-assisted-llm-routing)
+on your LLM policy. These examples keep using the same `LLM_MODEL=policy:<id>`;
+no client changes or decision-service credentials are needed in the application.
+
 ## Use in your application
 
 Import the functions from either language's `client` module into your own backend

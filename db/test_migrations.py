@@ -44,6 +44,13 @@ class MigrationTest(unittest.TestCase):
             self.assertEqual(db.execute('SELECT count(*) FROM connections').fetchone(), (1,))
         self.make('db-down')
         with sqlite3.connect(self.path) as db:
+            self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 14)
+            self.assertNotIn('decision_json', [row[1] for row in db.execute(
+                'PRAGMA table_info(routing_policies)'
+            )])
+            self.assertEqual(db.execute('SELECT count(*) FROM connections').fetchone(), (1,))
+        self.make('db-down')
+        with sqlite3.connect(self.path) as db:
             self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 13)
             self.assertEqual(db.execute('SELECT count(*) FROM connections').fetchone(), (1,))
         self.make('db-down')
@@ -82,6 +89,25 @@ class MigrationTest(unittest.TestCase):
             self.assertEqual(db.execute(
                 'SELECT name, key_hash, created_by_user_id FROM api_keys'
             ).fetchone(), ('existing', 'hash', None))
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_decisions_upgrade_preserves_existing_policies(self):
+        self.path.parent.mkdir(parents=True)
+        subprocess.run(['goose', '-env=none', '-dir', 'db/migrations', 'sqlite3',
+                        str(self.path), 'up-to', '3'], cwd=ROOT,
+                       capture_output=True, text=True, check=True)
+        with sqlite3.connect(self.path) as db:
+            db.execute("""
+                INSERT INTO routing_policies (id, name, task, constraints_json)
+                VALUES (7, 'Existing route', 'llm', '{"location_kind":"local"}')
+            """)
+        self.make('db-up')
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("""
+                SELECT id, name, task, constraints_json, decision_json
+                FROM routing_policies WHERE id = 7
+            """).fetchone(),
+                (7, 'Existing route', 'llm', '{"location_kind":"local"}', '{}'))
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
 

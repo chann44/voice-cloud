@@ -15,7 +15,7 @@ import (
 )
 
 func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, language string) (db.RoutingPolicy, []db.Deployment, error) {
-	policy := db.RoutingPolicy{Task: task, Objective: "balanced", MaxAttempts: 1, ConstraintsJson: "{}"}
+	policy := db.RoutingPolicy{Task: task, Objective: "balanced", MaxAttempts: 1, ConstraintsJson: "{}", DecisionJson: "{}"}
 	if language != "" && !languageTag.MatchString(language) {
 		return policy, nil, invalid("invalid language tag")
 	}

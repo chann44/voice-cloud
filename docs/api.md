@@ -97,6 +97,14 @@ constraints accept JSON objects at configuration time. Inference supports only
 the [documented routing constraints and pricing fields](inference.md#policies-and-fallback);
 unsupported constraints fail routing.
 
+Policies also accept `decision_json`, defaulting to `{}`. A nonempty object
+enables [decision-assisted routing](inference.md#decision-assisted-llm-routing)
+for LLM policies only. The API validates its endpoint, model, credential reference,
+timeout, and confidence fields. The console exposes the same JSON field. PUT
+replaces this setting too: omitting it disables decision assistance. No database
+credential value is needed; the referenced environment variable belongs in the
+API process.
+
 ## Configure a route
 
 ```sh
