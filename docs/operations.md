@@ -27,6 +27,9 @@ pruned, the key may be used again and can cause a new provider call. Application
 should use a fresh key for each intentional operation and retain their own durable
 business-operation identifiers when they need deduplication beyond router retention.
 
+Provider credentials use the [encrypted store](secrets.md). Preserve its master
+key separately from database backups; both are required for recovery.
+
 ## Automatic Compose backups
 
 The default Compose stack includes a `backup` service. It creates a verified
@@ -125,3 +128,14 @@ make backup-check
 go -C db test ./...
 make worker-check
 ```
+
+
+## Speech-only upgrade
+
+Migration 7 adds native S2S task storage without deleting existing models,
+credentials, policies, keys, attempts or history. Old text-task rows stay in the
+database for historical references; active model/policy catalogs exclude them.
+New text-model writes and chat inference are unavailable. Policies/default keys
+pointing to old text routes must be replaced with speech routes before use.
+Rollback to the previous schema refuses to run while any S2S data exists, rather
+than discard it. Upgrade the backend, worker and console together.

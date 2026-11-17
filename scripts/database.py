@@ -14,8 +14,9 @@ import threading
 import time
 from uuid import uuid4
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 REQUIRED_COLUMNS = {
+    'provider_secrets': ('connection_id', 'ciphertext', 'updated_at'),
     'connections': (
         'id', 'name', 'adapter', 'location_kind', 'base_url',
         'credential_ref', 'enabled', 'created_at', 'updated_at',

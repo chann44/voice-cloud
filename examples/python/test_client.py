@@ -17,7 +17,7 @@ class ClientTest(unittest.TestCase):
         environment = patch.dict(os.environ, {
             "VOICE_CLOUD_URL": "http://localhost:8080/",
             "VOICE_CLOUD_API_KEY": "vc_example",
-            "LLM_MODEL": "policy:1", "STT_MODEL": "policy:2",
+            "S2S_MODEL": "policy:1", "STT_MODEL": "policy:2",
             "TTS_MODEL": "deployment:3", "AUDIO_LANGUAGE": "en", "VOICE": "alloy",
         })
         environment.start()
@@ -72,17 +72,32 @@ class ClientTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Expected audio"):
                 client.post("/v1/audio/speech", {"input": "Hello"})
 
-    def test_chat_rejects_missing_text(self):
-        with patch.object(client, "post", return_value=b'{"choices":[]}'):
-            with self.assertRaisesRegex(RuntimeError, "assistant message"):
-                client.chat("Hello")
-        with self.assertRaisesRegex(RuntimeError, "JSON response object"):
-            client.json_response(b"[]")
-
     def test_models_must_select_router_resources(self):
-        with patch.dict(os.environ, {"LLM_MODEL": "gpt-4o"}):
-            with self.assertRaisesRegex(ValueError, "LLM_MODEL"):
-                client.chat("Hello")
+        with patch.dict(os.environ, {"STT_MODEL": "not-a-router-selector"}):
+            with self.assertRaisesRegex(ValueError, "STT_MODEL"):
+                client.transcribe("unused.wav")
+
+    def test_native_speech_to_speech_preserves_audio_and_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory, 'input.wav')
+            source.write_bytes(b'native speech input')
+            output = Path(directory, 'converted.mp3')
+            with patch.dict(os.environ, {'TARGET_LANGUAGE': 'fr'}):
+                with patch.object(client, 'post', return_value=b'ID3-native-output') as post:
+                    client.speech_to_speech(source, output)
+                    endpoint, body, content_type = post.call_args.args
+                    self.assertEqual(endpoint, '/v1/audio/speech-to-speech')
+                    message = BytesParser(policy=policy.default).parsebytes(
+                        f'Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n'.encode() + body)
+                    fields = {part.get_param('name', header='content-disposition'): part.get_payload(decode=True) for part in message.iter_parts()}
+                    self.assertEqual(fields['file'], b'native speech input')
+                    self.assertEqual(fields['model'], b'policy:1')
+                    self.assertEqual(fields['target_language'], b'fr')
+                    self.assertEqual(output.read_bytes(), b'ID3-native-output')
+                with patch.object(client, 'post') as post:
+                    with self.assertRaises(FileExistsError):
+                        client.speech_to_speech(source, output)
+                    post.assert_not_called()
 
 
 if __name__ == "__main__":

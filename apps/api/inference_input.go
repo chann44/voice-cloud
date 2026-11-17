@@ -27,20 +27,24 @@ type inferenceInput struct {
 }
 
 func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, error) {
-	in := &inferenceInput{task: "llm"}
+	in := &inferenceInput{}
 	switch r.URL.Path {
 	case "/v1/audio/speech":
 		in.task = "tts"
+	case "/v1/audio/speech-to-speech":
+		in.task = "s2s"
 	case "/v1/audio/transcriptions":
 		in.task = "stt"
+	default:
+		return nil, httpError{404, "unsupported speech endpoint"}
 	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		return nil, httpError{415, "invalid Content-Type"}
 	}
-	if in.task == "stt" {
+	if in.task == "stt" || in.task == "s2s" {
 		if media != "multipart/form-data" {
-			return nil, httpError{415, "transcriptions require multipart/form-data"}
+			return nil, httpError{415, "audio input requires multipart/form-data"}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, inferenceBodyLimit)
 		digest := sha256.New()
@@ -58,7 +62,7 @@ func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, err
 			in.form.RemoveAll()
 			return nil, invalid("one nonempty audio file is required")
 		}
-		for _, name := range []string{"model", "language", "stream"} {
+		for _, name := range []string{"model", "language", "stream", "voice", "response_format", "target_language"} {
 			if len(in.form.Value[name]) > 1 {
 				in.form.RemoveAll()
 				return nil, invalid("duplicate routing field")
@@ -98,19 +102,20 @@ func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, err
 				return nil, invalid("stream must be a boolean")
 			}
 		}
-		if in.task == "llm" {
-			var messages []json.RawMessage
-			if json.Unmarshal(in.fields["messages"], &messages) != nil || len(messages) == 0 {
-				return nil, invalid("messages must be a nonempty array")
-			}
-		} else {
-			for _, name := range []string{"input", "voice"} {
-				var value string
-				if json.Unmarshal(in.fields[name], &value) != nil || strings.TrimSpace(value) == "" {
-					return nil, invalid(name + " must be a nonempty string")
-				}
+
+		for _, name := range []string{"input", "voice"} {
+			var value string
+			if json.Unmarshal(in.fields[name], &value) != nil || strings.TrimSpace(value) == "" {
+				return nil, invalid(name + " must be a nonempty string")
 			}
 		}
+
+	}
+	if in.stream && in.task != "stt" {
+		if in.form != nil {
+			in.form.RemoveAll()
+		}
+		return nil, invalid("SSE is supported only for transcription; speech output streams as audio bytes")
 	}
 	if in.language != "" {
 		if len(in.language) > 64 || strings.ContainsAny(in.language, " \t\r\n_") {
@@ -173,10 +178,6 @@ func (in *inferenceInput) upstreamBody(d db.Deployment) (io.Reader, string, erro
 		fields[key] = value
 	}
 	fields["model"], _ = json.Marshal(d.UpstreamModelID)
-	// Routing language is forwarded only where the compatible protocol supports it.
-	if in.task == "llm" {
-		delete(fields, "language")
-	}
 	body, err := json.Marshal(fields)
 	return bytes.NewReader(body), "application/json", err
 }

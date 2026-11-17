@@ -606,6 +606,15 @@ func (q *Queries) DeleteModel(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected()
 }
 
+const deleteProviderSecret = `-- name: DeleteProviderSecret :exec
+DELETE FROM provider_secrets WHERE connection_id = ?
+`
+
+func (q *Queries) DeleteProviderSecret(ctx context.Context, connectionID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteProviderSecret, connectionID)
+	return err
+}
+
 const deleteRequest = `-- name: DeleteRequest :execrows
 DELETE FROM requests WHERE id = ?
 `
@@ -928,6 +937,17 @@ func (q *Queries) GetModel(ctx context.Context, id int64) (Model, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getProviderSecret = `-- name: GetProviderSecret :one
+SELECT connection_id, ciphertext, updated_at FROM provider_secrets WHERE connection_id = ?
+`
+
+func (q *Queries) GetProviderSecret(ctx context.Context, connectionID int64) (ProviderSecret, error) {
+	row := q.db.QueryRowContext(ctx, getProviderSecret, connectionID)
+	var i ProviderSecret
+	err := row.Scan(&i.ConnectionID, &i.Ciphertext, &i.UpdatedAt)
 	return i, err
 }
 
@@ -1348,7 +1368,7 @@ func (q *Queries) ListModelDeployments(ctx context.Context, modelID int64) ([]De
 }
 
 const listModels = `-- name: ListModels :many
-SELECT id, name, publisher, task, version, created_at, updated_at FROM models ORDER BY publisher, name, task, version, id
+SELECT id, name, publisher, task, version, created_at, updated_at FROM models WHERE task IN ('stt','tts','s2s') ORDER BY publisher, name, task, version, id
 `
 
 func (q *Queries) ListModels(ctx context.Context) ([]Model, error) {
@@ -1441,6 +1461,33 @@ func (q *Queries) ListPolicyTargets(ctx context.Context, policyID int64) ([]Poli
 	for rows.Next() {
 		var i PolicyTarget
 		if err := rows.Scan(&i.PolicyID, &i.DeploymentID, &i.Priority); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProviderSecrets = `-- name: ListProviderSecrets :many
+SELECT connection_id, ciphertext, updated_at FROM provider_secrets ORDER BY connection_id
+`
+
+func (q *Queries) ListProviderSecrets(ctx context.Context) ([]ProviderSecret, error) {
+	rows, err := q.db.QueryContext(ctx, listProviderSecrets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProviderSecret
+	for rows.Next() {
+		var i ProviderSecret
+		if err := rows.Scan(&i.ConnectionID, &i.Ciphertext, &i.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1626,7 +1673,7 @@ func (q *Queries) ListRequests(ctx context.Context, arg ListRequestsParams) ([]R
 }
 
 const listRoutingPolicies = `-- name: ListRoutingPolicies :many
-SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json FROM routing_policies ORDER BY name, id
+SELECT id, name, task, objective, fallback_enabled, max_attempts, constraints_json, created_at, updated_at, decision_json FROM routing_policies WHERE task IN ('stt','tts','s2s') ORDER BY name, id
 `
 
 func (q *Queries) ListRoutingPolicies(ctx context.Context) ([]RoutingPolicy, error) {
@@ -1916,6 +1963,22 @@ type SetPolicyTargetParams struct {
 
 func (q *Queries) SetPolicyTarget(ctx context.Context, arg SetPolicyTargetParams) error {
 	_, err := q.db.ExecContext(ctx, setPolicyTarget, arg.PolicyID, arg.DeploymentID, arg.Priority)
+	return err
+}
+
+const setProviderSecret = `-- name: SetProviderSecret :exec
+INSERT INTO provider_secrets (connection_id, ciphertext, updated_at) VALUES (?, ?, ?)
+ON CONFLICT (connection_id) DO UPDATE SET ciphertext=excluded.ciphertext, updated_at=excluded.updated_at
+`
+
+type SetProviderSecretParams struct {
+	ConnectionID int64  `json:"connection_id"`
+	Ciphertext   []byte `json:"ciphertext"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
+func (q *Queries) SetProviderSecret(ctx context.Context, arg SetProviderSecretParams) error {
+	_, err := q.db.ExecContext(ctx, setProviderSecret, arg.ConnectionID, arg.Ciphertext, arg.UpdatedAt)
 	return err
 }
 

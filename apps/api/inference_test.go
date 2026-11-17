@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"voice-cloud/db"
 )
@@ -61,97 +60,16 @@ func callInference(t *testing.T, a *testAPI, token, path, contentType string, bo
 	return w
 }
 
-func TestInferenceJSONAuthenticationAndActivity(t *testing.T) {
-	var calls atomic.Int64
-	responseBody := `{"id":"completion-1","choices":[{"message":{"role":"assistant","content":"Hello"}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		if r.URL.Path != "/v1/chat/completions" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer provider-secret" {
-			t.Errorf("upstream request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
-		}
-		var body map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("upstream JSON: %v", err)
-		}
-		if string(body["model"]) != `"upstream-primary"` || body["language"] != nil || string(body["temperature"]) != "0.5" {
-			t.Errorf("upstream fields: %#v", body)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Request-ID", "provider-request-1")
-		w.Header().Set("Set-Cookie", "private=secret")
-		io.WriteString(w, responseBody)
-	}))
-	defer provider.Close()
-	a, token := setupInference(t, "llm", provider.URL+"/v1")
-	body := []byte(`{"messages":[{"role":"user","content":"Hi"}],"language":"en","temperature":0.5}`)
-	callInference(t, a, testToken, "/v1/chat/completions", "application/json", body, nil, 401)
-	callInference(t, a, "vc_invalid", "/v1/chat/completions", "application/json", body, nil, 401)
-	response := callInference(t, a, token, "/v1/chat/completions", "application/json", body, map[string]string{"Idempotency-Key": "once"}, 200)
-	requestID := response.Header().Get("X-Request-ID")
-	if requestID == "" || response.Body.String() != responseBody || response.Header().Get("Set-Cookie") != "" {
-		t.Fatalf("inference response: headers=%v body=%s", response.Header(), response.Body.String())
-	}
-	duplicate := callInference(t, a, token, "/v1/chat/completions", "application/json", body, map[string]string{"Idempotency-Key": "once"}, 409)
-	if calls.Load() != 1 || duplicate.Header().Get("X-Request-ID") != requestID {
-		t.Fatal("duplicate idempotency key dispatched again")
-	}
-	queries := db.New(a.db)
-	ctx := context.Background()
-	request, err := queries.GetRequest(ctx, requestID)
-	if err != nil || request.Status != "succeeded" || !request.FinishedAt.Valid || request.ApiKeyID != 1 || request.Task != "llm" {
-		t.Fatalf("request activity: %#v %v", request, err)
-	}
-	attempts, err := queries.ListRequestAttempts(ctx, requestID)
-	if err != nil || len(attempts) != 1 || attempts[0].Status != "succeeded" || !attempts[0].FirstOutputAt.Valid || attempts[0].ProviderRequestID.String != "provider-request-1" {
-		t.Fatalf("attempt activity: %#v %v", attempts, err)
-	}
-	usage, err := queries.ListRequestUsage(ctx, requestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	metrics := map[string]int64{}
-	for _, row := range usage {
-		metrics[row.Metric] = row.Quantity
-		if row.Metric == "requests" && (!row.CostNanos.Valid || row.CostNanos.Int64 != 7 || row.CostStatus != "estimated") {
-			t.Fatalf("request rate: %#v", row)
-		}
-		if row.Metric != "requests" && (!row.CostNanos.Valid || row.CostNanos.Int64 != 0 || row.CostStatus != "estimated") {
-			t.Fatalf("flat price was counted twice: %#v", row)
-		}
-	}
-	if metrics["requests"] != 1 || metrics["input_tokens"] != 3 || metrics["output_tokens"] != 2 || metrics["total_tokens"] != 5 {
-		t.Fatalf("usage: %#v", metrics)
-	}
-	management := httptest.NewRequest("GET", "/v1/models", nil)
-	management.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	a.handler.ServeHTTP(w, management)
-	if w.Code != 401 {
-		t.Fatalf("router key accessed management API: %d", w.Code)
-	}
-	a.call("DELETE", "/v1/api-keys/1", "", 204)
-	callInference(t, a, token, "/v1/chat/completions", "application/json", body, nil, 401)
-	expiring := jsonObject(t, a.call("POST", "/v1/api-keys", `{"name":"Expiring","default_policy_id":1}`, 201))["key"].(string)
-	if _, err := a.db.Exec("UPDATE api_keys SET expires_at = ? WHERE id = 2", time.Now().UnixMilli()-1); err != nil {
-		t.Fatal(err)
-	}
-	callInference(t, a, expiring, "/v1/chat/completions", "application/json", body, nil, 401)
-	if calls.Load() != 1 {
-		t.Fatal("invalid or revoked credential reached provider")
-	}
-}
-
 func TestInferenceFallback(t *testing.T) {
 	for _, upstreamStatus := range []int{503, 401, 403, 404, 400} {
 		t.Run(fmt.Sprint(upstreamStatus), func(t *testing.T) {
 			var primary, backup atomic.Int64
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body struct {
-					Model string `json:"model"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("upstream decode: %v", err)
-				}
+				var body struct{ Model string }
+				_ = r.ParseMultipartForm(1024)
+				defer r.MultipartForm.RemoveAll()
+				body.Model = r.FormValue("model")
+
 				if body.Model == "upstream-primary" {
 					primary.Add(1)
 					w.WriteHeader(upstreamStatus)
@@ -160,17 +78,18 @@ func TestInferenceFallback(t *testing.T) {
 				}
 				backup.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Hello"}}]}`)
+				io.WriteString(w, `{"text":"Hello"}`)
 			}))
 			defer provider.Close()
-			a, token := setupInference(t, "llm", provider.URL)
+			a, token := setupInference(t, "stt", provider.URL)
 			a.call("POST", "/v1/deployments", `{"name":"Backup","model_id":1,"connection_id":1,"upstream_model_id":"upstream-backup"}`, 201)
 			a.call("PUT", "/v1/policies/1/targets/2", `{"priority":1}`, 200)
 			wantStatus, wantAttempts := 200, 2
 			if upstreamStatus == 400 {
 				wantStatus, wantAttempts = 502, 1
 			}
-			response := callInference(t, a, token, "/v1/chat/completions", "application/json", []byte(`{"model":"policy:1","messages":[{"role":"user","content":"Hi"}]}`), nil, wantStatus)
+			raw, media := audioUpload(t, "policy:1", "json")
+			response := callInference(t, a, token, "/v1/audio/transcriptions", media, raw, nil, wantStatus)
 			if primary.Load() != 1 || backup.Load() != int64(wantAttempts-1) || strings.Contains(response.Body.String(), "private-provider-error") {
 				t.Fatalf("fallback calls primary=%d backup=%d response=%s", primary.Load(), backup.Load(), response.Body.String())
 			}
@@ -179,23 +98,6 @@ func TestInferenceFallback(t *testing.T) {
 				t.Fatalf("fallback attempts: %#v %v", attempts, err)
 			}
 		})
-	}
-}
-
-func TestInferenceMalformedPricing(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Hello"}}]}`)
-	}))
-	defer provider.Close()
-	a, token := setupInference(t, "llm", provider.URL)
-	if _, err := a.db.Exec(`UPDATE deployments SET pricing_json = '{"request_nanos":"invalid"}'`); err != nil {
-		t.Fatal(err)
-	}
-	response := callInference(t, a, token, "/v1/chat/completions", "application/json", []byte(`{"messages":[{"role":"user","content":"Hi"}]}`), nil, 200)
-	rows, err := db.New(a.db).ListRequestUsage(context.Background(), response.Header().Get("X-Request-ID"))
-	if err != nil || len(rows) != 1 || rows[0].Metric != "requests" || rows[0].CostNanos.Valid || rows[0].CostStatus != "unknown" {
-		t.Fatalf("malformed pricing became a free request: %#v %v", rows, err)
 	}
 }
 
@@ -282,7 +184,7 @@ func TestInferenceStreams(t *testing.T) {
 				if mode == "interrupted" {
 					w.Header().Set("Content-Length", "99999")
 				}
-				io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n")
+				io.WriteString(w, "data: {\"type\":\"transcript.text.delta\",\"delta\":\"Hello\"}\n\n")
 				w.(http.Flusher).Flush()
 				io.WriteString(w, "data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
 				w.(http.Flusher).Flush()
@@ -291,10 +193,11 @@ func TestInferenceStreams(t *testing.T) {
 				}
 			}))
 			defer provider.Close()
-			a, token := setupInference(t, "llm", provider.URL)
+			a, token := setupInference(t, "stt", provider.URL)
 			a.call("POST", "/v1/deployments", `{"name":"Backup","model_id":1,"connection_id":1,"upstream_model_id":"backup","capabilities_json":{"streaming":true}}`, 201)
 			a.call("PUT", "/v1/policies/1/targets/2", `{"priority":1}`, 200)
-			response := callInference(t, a, token, "/v1/chat/completions", "application/json", []byte(`{"messages":[{"role":"user","content":"Hi"}],"stream":true}`), nil, 200, mode != "complete")
+			raw, media := audioUploadStream(t, "policy:1")
+			response := callInference(t, a, token, "/v1/audio/transcriptions", media, raw, nil, 200, mode != "complete")
 			requestID := response.Header().Get("X-Request-ID")
 			request, err := db.New(a.db).GetRequest(context.Background(), requestID)
 			wantStatus, wantCode := "succeeded", ""

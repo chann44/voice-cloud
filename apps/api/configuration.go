@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -16,14 +19,22 @@ type connectionBody struct {
 	BaseURL       string  `json:"base_url"`
 	CredentialRef *string `json:"credential_ref"`
 	Enabled       *bool   `json:"enabled"`
+	APIKey        string  `json:"api_key"`
+	RemoveAPIKey  bool    `json:"remove_api_key"`
 }
 
-func connectionJSON(row db.Connection) any {
+func (a *api) connectionJSON(ctx context.Context, row db.Connection) any {
+	_, stored, err := a.providerCredential(ctx, a.queries, row)
 	return struct {
 		db.Connection
-		CredentialRef any  `json:"credential_ref"`
-		Enabled       bool `json:"enabled"`
-	}{row, stringValue(row.CredentialRef), row.Enabled == 1}
+		CredentialRef          any          `json:"credential_ref"`
+		Enabled                bool         `json:"enabled"`
+		InferenceSupported     bool         `json:"inference_supported"`
+		CredentialReady        bool         `json:"credential_ready"`
+		HasAPIKey              bool         `json:"has_api_key"`
+		SecretStorageAvailable bool         `json:"secret_storage_available"`
+		AdapterSupport         *adapterInfo `json:"adapter_support"`
+	}{row, stringValue(row.CredentialRef), row.Enabled == 1, supportsInferenceAdapter(row.Adapter), err == nil, stored, a.secrets != nil, adapterSupport(row.Adapter)}
 }
 
 func (a *api) connections(w http.ResponseWriter, r *http.Request) error {
@@ -36,10 +47,20 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) error {
 	case http.MethodGet:
 		if id == 0 {
 			rows, err := a.queries.ListConnections(ctx)
-			return result(w, 200, mapItems(rows, connectionJSON), err)
+			if err != nil {
+				return err
+			}
+			values := make([]any, 0, len(rows))
+			for _, row := range rows {
+				values = append(values, a.connectionJSON(ctx, row))
+			}
+			return send(w, 200, values)
 		}
 		row, err := a.queries.GetConnection(ctx, id)
-		return result(w, 200, connectionJSON(row), err)
+		if err != nil {
+			return err
+		}
+		return send(w, 200, a.connectionJSON(ctx, row))
 	case http.MethodDelete:
 		count, err := a.queries.DeleteConnection(ctx, id)
 		return removed(w, count, err)
@@ -55,20 +76,70 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) error {
 			return invalid("location_kind must be local or cloud")
 		}
 		parsed, err := url.Parse(body.BaseURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
-			return invalid("base_url must be an HTTP(S) URL without credentials or a fragment")
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+			return invalid("base_url must be an HTTP(S) URL without credentials, query, or fragment")
 		}
 		if body.CredentialRef != nil {
+			if *body.CredentialRef == "SECRETS_MASTER_KEY" {
+				return invalid("the secret storage master key cannot be used as a provider credential")
+			}
 			if err := required(*body.CredentialRef); err != nil {
 				return err
 			}
 		}
-		if id == 0 {
-			row, err := a.queries.CreateConnection(ctx, db.CreateConnectionParams{Name: body.Name, Adapter: body.Adapter, LocationKind: body.LocationKind, BaseUrl: body.BaseURL, CredentialRef: nullableString(body.CredentialRef), Enabled: defaultEnabled(body.Enabled)})
-			return result(w, 201, connectionJSON(row), err)
+		if err := validateProviderKey(body.APIKey); err != nil {
+			return err
 		}
-		row, err := a.queries.UpdateConnection(ctx, db.UpdateConnectionParams{ID: id, Name: body.Name, Adapter: body.Adapter, LocationKind: body.LocationKind, BaseUrl: body.BaseURL, CredentialRef: nullableString(body.CredentialRef), Enabled: defaultEnabled(body.Enabled), UpdatedAt: time.Now().UnixMilli()})
-		return result(w, 200, connectionJSON(row), err)
+		if body.APIKey != "" && body.RemoveAPIKey {
+			return invalid("replace or remove the provider API key, not both")
+		}
+		if body.APIKey != "" && a.secrets == nil {
+			return httpError{503, "provider secret storage is not configured; set SECRETS_MASTER_KEY in the API service"}
+		}
+		if body.APIKey != "" || body.RemoveAPIKey {
+			body.CredentialRef = nil
+		}
+		tx, err := a.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		queries := a.queries.WithTx(tx)
+		var row db.Connection
+		status := 200
+		if id == 0 {
+			status = 201
+			row, err = queries.CreateConnection(ctx, db.CreateConnectionParams{Name: body.Name, Adapter: body.Adapter, LocationKind: body.LocationKind, BaseUrl: body.BaseURL, CredentialRef: nullableString(body.CredentialRef), Enabled: defaultEnabled(body.Enabled)})
+		} else {
+			previous, err := queries.GetConnection(ctx, id)
+			if err != nil {
+				return err
+			}
+			if previous.BaseUrl != body.BaseURL && body.APIKey == "" && !body.RemoveAPIKey {
+				if _, err := queries.GetProviderSecret(ctx, id); err == nil {
+					return invalid("replace or remove the stored API key when changing its provider URL")
+				} else if !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+			}
+			row, err = queries.UpdateConnection(ctx, db.UpdateConnectionParams{ID: id, Name: body.Name, Adapter: body.Adapter, LocationKind: body.LocationKind, BaseUrl: body.BaseURL, CredentialRef: nullableString(body.CredentialRef), Enabled: defaultEnabled(body.Enabled), UpdatedAt: time.Now().UnixMilli()})
+		}
+		if err != nil {
+			return err
+		}
+		if body.APIKey != "" {
+			if err := a.storeProviderSecret(ctx, queries, row, body.APIKey); err != nil {
+				return err
+			}
+		} else if body.RemoveAPIKey {
+			if err := queries.DeleteProviderSecret(ctx, row.ID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return send(w, status, a.connectionJSON(ctx, row))
 	}
 }
 

@@ -106,6 +106,12 @@ type PolicyTarget struct {
 	Priority     int64 `json:"priority"`
 }
 
+type ProviderSecret struct {
+	ConnectionID int64  `json:"connection_id"`
+	Ciphertext   []byte `json:"ciphertext"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
 type Request struct {
 	ID                  string         `json:"id"`
 	ApiKeyID            int64          `json:"api_key_id"`

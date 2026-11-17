@@ -110,6 +110,8 @@
 								<dt>Enabled</dt>
 								<dd>{deployment.enabled ? 'yes' : 'no'}</dd>
 							</dl>
+							<p class="mt-3 text-xs">App selector: <code>deployment:{deployment.id}</code></p>
+							{#if deployment.enabled}<Button class="mt-3" variant="outline" size="sm" href={`/playground?model=deployment:${deployment.id}`}>Test this model →</Button>{/if}
 							{#each ['capabilities_json', 'pricing_json', 'settings_json'] as key}<details
 									class="axis-evidence"
 								>

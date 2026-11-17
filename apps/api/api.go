@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/cipher"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 )
 
 type api struct {
+	secrets cipher.AEAD
 	db      *sql.DB
 	queries *db.Queries
 	logins  loginLimiter
@@ -147,8 +149,8 @@ func required(values ...string) error {
 	return nil
 }
 func taskValid(task string) error {
-	if task != "stt" && task != "tts" && task != "llm" {
-		return invalid("task must be stt, tts, or llm")
+	if task != "stt" && task != "tts" && task != "s2s" {
+		return invalid("task must be stt, tts, or s2s")
 	}
 	return nil
 }

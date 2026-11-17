@@ -15,6 +15,9 @@ import (
 )
 
 func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, language string, input *inferenceInput) (db.RoutingPolicy, []db.Deployment, error) {
+	if err := taskValid(task); err != nil {
+		return db.RoutingPolicy{}, nil, err
+	}
 	requirements, err := requiredCapabilities(input)
 	if err != nil {
 		return db.RoutingPolicy{}, nil, err
@@ -114,8 +117,11 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 			exclusions["invalid_settings"]++
 			continue
 		}
-		if !supportsInferenceAdapter(connection.Adapter) {
-			exclusions["unsupported_adapter"]++
+		if reason := adapterRequestReason(connection.Adapter, input, deployment); reason != "" {
+			if kind == "deployment" {
+				return policy, nil, invalid("deployment is incompatible with this request: " + reason)
+			}
+			exclusions[reason]++
 			continue
 		}
 		if constraints.LocationKind != "" && constraints.LocationKind != connection.LocationKind {

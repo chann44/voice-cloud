@@ -36,8 +36,8 @@
 <p class="muted text-xs mt-3">Duration includes routing and all attempts for completed requests. P95 is the duration at or below which 95% of completed requests finished.</p>
 <div class="panel panel-body section">
  <h2 class="mb-2">Recorded cost / 24h</h2>
- <p>${(data.analytics.known_cost_nanos / 1e9).toFixed(6)} known or estimated · {data.analytics.unknown_cost_attempts} provider attempts and {data.analytics.unknown_decisions} decisions with incomplete cost.</p>
- <p class="muted text-xs mt-2">This is a partial estimate, not an invoice. It includes configured decision-service estimates; unknown costs are not zero.</p>
+ <p>${(data.analytics.known_cost_nanos / 1e9).toFixed(6)} known or estimated · {data.analytics.unknown_cost_attempts} provider attempts with incomplete cost.</p>
+ <p class="muted text-xs mt-2">This is a partial estimate, not an invoice. Unknown costs are not zero.</p>
 </div>
 <div class="two-column section">
 	<section class="panel">

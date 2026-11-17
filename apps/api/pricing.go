@@ -87,14 +87,5 @@ func estimatedRoutingCost(input *inferenceInput, req requestRequirements, deploy
 	if input.task == "tts" {
 		return metricCost(pricing, "input_characters", req.inputCharacters)
 	}
-	if input.task != "llm" || req.vision || req.audioInput || req.audioOutput || req.outputTokens <= 0 {
-		return nil
-	}
-	in := metricCost(pricing, "input_tokens", req.contextBudget)
-	out := metricCost(pricing, "output_tokens", req.outputTokens)
-	if in == nil || out == nil || *in > math.MaxInt64-*out {
-		return nil
-	}
-	total := *in + *out
-	return &total
+	return nil
 }

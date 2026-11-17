@@ -16,7 +16,7 @@ python3 /app/scripts/seed.py --db "$DB_PATH"
 
 api &
 api_pid=$!
-worker &
+env -u SECRETS_MASTER_KEY worker &
 worker_pid=$!
 
 shutdown() {

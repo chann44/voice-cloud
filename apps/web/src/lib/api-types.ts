@@ -7,6 +7,11 @@ export type User = {
 	created_at: number;
 };
 export type Connection = {
+	adapter_support: Adapter | null;
+	inference_supported: boolean;
+	credential_ready: boolean;
+	has_api_key: boolean;
+	secret_storage_available: boolean;
 	id: number;
 	name: string;
 	adapter: string;
@@ -19,7 +24,7 @@ export type Model = {
 	id: number;
 	name: string;
 	publisher: string;
-	task: 'stt' | 'tts' | 'llm';
+	task: 'stt' | 'tts' | 's2s';
 	version: string;
 };
 export type Deployment = {
@@ -98,11 +103,13 @@ export type Usage = {
 	cost_status: string;
 };
 export type Configuration = {
+	adapters: Adapter[];
 	connections: Connection[];
 	models: Model[];
 	deployments: Deployment[];
 	policies: Policy[];
 };
+export type Adapter = { id: string; tasks: ('s2s' | 'stt' | 'tts')[]; protocol: string; discovery: boolean; notes: string };
 export type Target = { deployment_id: number; policy_id: number; priority: number };
 export type Language = { deployment_id: number; language_tag: string };
 

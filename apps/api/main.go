@@ -19,6 +19,10 @@ func run(ctx context.Context) error {
 	if _, err := configuredGate(); err != nil {
 		return err
 	}
+	secretCipher, err := configuredSecretCipher()
+	if err != nil {
+		return err
+	}
 	token := os.Getenv("ADMIN_TOKEN")
 	if token != "" && len(strings.TrimSpace(token)) < 32 {
 		return errors.New("ADMIN_TOKEN must contain at least 32 characters")
@@ -32,6 +36,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer database.Close()
+	if err := validateStoredSecrets(ctx, database, secretCipher); err != nil {
+		return err
+	}
 	address := os.Getenv("API_ADDR")
 	if address == "" {
 		address = "127.0.0.1:8080"

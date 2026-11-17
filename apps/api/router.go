@@ -11,8 +11,10 @@ import (
 
 func newHandler(database *sql.DB, adminToken string) http.Handler {
 	gate, _ := configuredGate()
-	a := &api{db: database, queries: db.New(database), gate: gate}
+	secretCipher, _ := configuredSecretCipher()
+	a := &api{db: database, queries: db.New(database), gate: gate, secrets: secretCipher}
 	admin := http.NewServeMux()
+	admin.HandleFunc("GET /v1/adapters", handle(func(w http.ResponseWriter, r *http.Request) error { return send(w, 200, supportedAdapters) }))
 	for path, fn := range map[string]endpoint{
 		"connections": a.connections, "models": a.models,
 		"deployments": a.deployments, "policies": a.policies,
@@ -25,6 +27,8 @@ func newHandler(database *sql.DB, adminToken string) http.Handler {
 		}
 	}
 	admin.HandleFunc("GET /v1/deployments/{id}/languages", handle(a.languages))
+	admin.HandleFunc("POST /v1/connections/{id}/discover", handle(a.discoverModels))
+	admin.HandleFunc("POST /v1/connections/{id}/models", handle(a.importModel))
 	admin.HandleFunc("GET /v1/deployments/{id}/health", handle(a.deploymentHealth))
 	admin.HandleFunc("PUT /v1/deployments/{id}/languages/{language}", handle(a.languages))
 	admin.HandleFunc("DELETE /v1/deployments/{id}/languages/{language}", handle(a.languages))
@@ -45,8 +49,11 @@ func newHandler(database *sql.DB, adminToken string) http.Handler {
 	admin.HandleFunc("POST /v1/auth/logout", handle(a.logout))
 	admin.HandleFunc("POST /v1/users", handle(a.addUser))
 	root := http.NewServeMux()
-	root.HandleFunc("POST /v1/chat/completions", handle(a.inference))
+	root.HandleFunc("POST /v1/chat/completions", handle(func(w http.ResponseWriter, r *http.Request) error {
+		return httpError{410, "Voice Cloud supports speech tasks only; chat completions are unavailable"}
+	}))
 	root.HandleFunc("POST /v1/audio/speech", handle(a.inference))
+	root.HandleFunc("POST /v1/audio/speech-to-speech", handle(a.inference))
 	root.HandleFunc("POST /v1/audio/transcriptions", handle(a.inference))
 	root.HandleFunc("GET /v1/auth/status", handle(a.authStatus))
 	root.HandleFunc("POST /v1/auth/signup", handle(a.signup))

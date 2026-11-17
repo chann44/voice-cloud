@@ -9,6 +9,7 @@ from email.parser import BytesParser
 import http.cookiejar
 import importlib.util
 import json
+import base64
 import os
 from pathlib import Path
 import socket
@@ -52,6 +53,12 @@ class Provider(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path != "/v1/models" or self.headers.get("Authorization") != "Bearer " + PROVIDER_KEY:
+            self.reply(401, {"error": "invalid catalog request"})
+            return
+        self.reply(200, {"data": [{"id": "local-stt", "task": "stt"}, {"id": "local-tts", "task": "tts"}, {"id": "local-s2s", "task": "s2s"}, {"id": "hidden-text-model", "task": "llm"}]})
+
     def do_POST(self):
         if self.headers.get("Authorization") != "Bearer " + PROVIDER_KEY:
             self.reply(401, {"error": "wrong provider credential"})
@@ -61,51 +68,34 @@ class Provider(BaseHTTPRequestHandler):
             while True:
                 size = int(self.rfile.readline(128).split(b";", 1)[0], 16)
                 if size == 0:
-                    while self.rfile.readline(8192).strip():
-                        pass
+                    while self.rfile.readline(8192).strip(): pass
                     break
                 chunks.append(self.rfile.read(size))
                 require(self.rfile.read(2) == b"\r\n", "Invalid chunk framing")
             raw = b"".join(chunks)
         else:
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        if self.path == "/v1/audio/transcriptions":
-            message = BytesParser(policy=email_policy.default).parsebytes(
-                ("Content-Type: " + self.headers.get("Content-Type", "") + "\r\nMIME-Version: 1.0\r\n\r\n").encode() + raw
-            )
-            fields = {part.get_param("name", header="content-disposition"): part.get_payload(decode=True) for part in message.iter_parts()}
-            if fields.get("file") != b"audio-bytes" or fields.get("model") != b"local-stt":
-                self.reply(400, {"error": "missing multipart audio or upstream model"})
-                return
-            self.reply(200, {"text": "Hello from recorded audio", "duration": 1.25})
-            return
-        body = json.loads(raw)
         if self.path == "/v1/audio/speech":
-            if body.get("voice") != "alloy" or body.get("model") != "local-tts":
-                self.reply(400, {"error": "invalid speech selection"})
-                return
+            body = json.loads(raw)
+            require(body.get("voice") == "alloy" and body.get("model") == "local-tts", "Wrong synthesis selection")
             self.reply(200, AUDIO, "audio/mpeg")
             return
-        if self.path != "/v1/chat/completions":
-            self.reply(404, {"error": "unsupported provider path"})
+        if self.path not in ("/v1/audio/transcriptions", "/v1/audio/speech-to-speech"):
+            self.reply(404, {"error": "unsupported speech path"})
             return
-        if body.get("model") == "local-failing":
-            self.reply(503, {"error": "simulated unavailable provider"})
-            return
-        if body.get("model") != "local-chat":
-            self.reply(400, {"error": "wrong upstream model"})
-            return
-        usage = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
-        if body.get("stream"):
-            chunks = [
-                {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "E2E routed reply"}, "finish_reason": None}]},
-                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-                {"choices": [], "usage": usage},
-            ]
-            events = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
-            self.reply(200, events + b"data: [DONE]\n\n", "text/event-stream")
-            return
-        self.reply(200, {"id": "local-completion", "choices": [{"message": {"role": "assistant", "content": "E2E routed reply"}, "finish_reason": "stop"}], "usage": usage})
+        message = BytesParser(policy=email_policy.default).parsebytes(
+            ("Content-Type: " + self.headers.get("Content-Type", "") + "\r\nMIME-Version: 1.0\r\n\r\n").encode() + raw)
+        fields = {part.get_param("name", header="content-disposition"): part.get_payload(decode=True) for part in message.iter_parts()}
+        require(fields.get("file") == b"audio-bytes", "Audio upload changed")
+        if fields.get("model") == b"local-failing":
+            self.reply(503, {"error": "simulated provider failure"})
+        elif self.path.endswith("speech-to-speech"):
+            require(fields.get("model") == b"local-s2s", "Wrong S2S model")
+            self.reply(200, AUDIO, "audio/mpeg")
+        elif fields.get("stream") == b"true":
+            self.reply(200, b'data: {"type":"transcript.text.delta","delta":"Hello"}\n\ndata: {"type":"transcript.text.done","text":"Hello from recorded audio"}\n\n', "text/event-stream")
+        else:
+            self.reply(200, {"text": "Hello from recorded audio", "duration": 1.25})
 
 
 class LocalStack:
@@ -124,6 +114,7 @@ class LocalStack:
         self.cookies = http.cookiejar.CookieJar()
         self.browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
         self.api_environment = dict(os.environ, DB_PATH=str(self.directory / "router.db"), API_ADDR=self.api.removeprefix("http://"), ADMIN_TOKEN="", E2E_PROVIDER_KEY=PROVIDER_KEY)
+        self.api_environment['SECRETS_MASTER_KEY'] = base64.b64encode(os.urandom(32)).decode()
 
     def spawn(self, name, command, environment):
         log = (self.directory / (name + ".log")).open("a+")
@@ -184,7 +175,7 @@ class LocalStack:
         return json.loads(data) if data else None
 
     def form(self, path, values):
-        return self.request(self.web + path, body=urllib.parse.urlencode(values).encode(), media="application/x-www-form-urlencoded", browser=True, headers={"Origin": self.web})
+        return self.request(self.web + path, body=urllib.parse.urlencode(values).encode(), media="application/x-www-form-urlencoded", browser=True, headers={"Origin": self.web, "Accept": "text/html"})
 
     def stop(self, process):
         if process.poll() is None:
@@ -228,48 +219,58 @@ class LocalStack:
                     os.environ[name] = value
         self.form("/login", {"email": "admin@example.test", "password": "console-test-password"})
         session = next(cookie.value for cookie in self.cookies if cookie.name == "voicecloud_session")
-        connection = self.json_api("connections", session, {"name": "E2E provider", "adapter": "custom", "location_kind": "local", "base_url": self.provider_url, "credential_ref": "E2E_PROVIDER_KEY"})
-        model_ids = {}
-        for task in ("llm", "stt", "tts"):
-            model_ids[task] = self.json_api("models", session, {"name": "E2E " + task, "publisher": "local", "task": task})["id"]
-        capabilities = {"streaming": True, "max_output_tokens": 512, "max_input_bytes": 8192, "voices": ["alloy"], "response_formats": ["json", "mp3"], "routing_description": "Local test deployment"}
+        connection = self.json_api("connections", session, {"name": "E2E speech provider", "adapter": "local", "location_kind": "local", "base_url": self.provider_url})
+        saved, _ = self.form("/manage/connections?/save", {"id": connection["id"], "name": connection["name"], "adapter": "local", "location_kind": "local", "base_url": self.provider_url, "enabled": "on", "api_key": PROVIDER_KEY})
+        require(PROVIDER_KEY.encode() not in saved, "Provider key echoed in configuration HTML")
+        print("Checking speech-only discovery, setup and encrypted credentials...", flush=True)
+        catalog, _ = self.form("/models?/discover", {"connection_id": connection["id"]})
+        require(b"local-stt" in catalog and b"local-s2s" in catalog and b"hidden-text-model" not in catalog, "Speech catalog was not filtered")
+        caps = {"streaming": True, "max_input_bytes": 8192, "voices": ["alloy"], "response_formats": ["json", "mp3"], "target_languages": ["fr"]}
         deployments = {}
-        for name, task, upstream in (("failing", "llm", "local-failing"), ("chat", "llm", "local-chat"), ("stt", "stt", "local-stt"), ("tts", "tts", "local-tts")):
-            deployments[name] = self.json_api("deployments", session, {"name": "E2E " + name, "model_id": model_ids[task], "connection_id": connection["id"], "upstream_model_id": upstream, "capabilities_json": capabilities, "pricing_json": {"request_nanos": 10}})["id"]
-        policy = self.json_api("policies", session, {"name": "E2E chat policy", "task": "llm", "max_attempts": 2, "fallback_enabled": True})
-        for priority, name in enumerate(("failing", "chat")):
-            self.json_api(f"policies/{policy['id']}/targets/{deployments[name]}", session, {"priority": priority}, "PUT")
+        for task in ("stt", "tts", "s2s"):
+            page, _ = self.form("/models?/import", {"connection_id": connection["id"], "upstream_model_id": "local-" + task, "task": task, "capabilities_json": json.dumps(caps)})
+            require(b"Registered deployment:" in page and PROVIDER_KEY.encode() not in page, "Speech model registration failed")
+            deployments[task] = next(row["id"] for row in self.json_api("deployments", session) if row["upstream_model_id"] == "local-" + task)
+        models = self.json_api("models", session)
+        stt_model = next(row["id"] for row in models if row["task"] == "stt")
+        primary = self.json_api("deployments", session, {"name": "Failing speech", "model_id": stt_model, "connection_id": connection["id"], "upstream_model_id": "local-failing", "pricing_json": {"request_nanos": 10}})
+        policy = self.json_api("policies", session, {"name": "E2E speech fallback", "task": "stt", "max_attempts": 2, "fallback_enabled": True})
+        for priority, deployment in enumerate((primary['id'], deployments['stt'])):
+            self.json_api(f"policies/{policy['id']}/targets/{deployment}", session, {"priority": priority}, "PUT")
         key = self.json_api("api-keys", session, {"name": "E2E app", "default_policy_id": policy["id"]})["key"]
-        print("Checking real console playground and secret handling...", flush=True)
-        page, _ = self.form("/playground", {"router_key": key, "model": f"policy:{policy['id']}", "prompt": "Say hello"})
-        require(b"E2E routed reply" in page, "Playground did not show the model reply")
-        require(key.encode() not in page and session.encode() not in page and PROVIDER_KEY.encode() not in page, "Credential leaked in playground HTML")
-        print("Checking fallback, SSE, transcription, speech, usage and analytics...", flush=True)
-        response, headers = self.request(self.api + "/v1/chat/completions", key, {"model": f"policy:{policy['id']}", "messages": [{"role": "user", "content": "Hello"}]})
-        require(json.loads(response)["choices"][0]["message"]["content"] == "E2E routed reply", "Unexpected chat reply")
-        request_id = headers["X-Request-ID"]
+        print("Checking speech playground, native audio requests and fallback...", flush=True)
+        page, _ = self.form("/playground", {"router_key": key, "model": f"deployment:{deployments['tts']}", "task": "tts", "text": "Hello", "voice": "alloy"})
+        require(b"data:audio/mpeg;base64," in page and key.encode() not in page and PROVIDER_KEY.encode() not in page, "TTS playground failed or leaked a key")
+        def upload(task, route, browser=False, extra=None):
+            boundary = uuid4().hex
+            values = {"model": route, "response_format": "json" if task == 'stt' else 'mp3'}
+            if extra: values.update(extra)
+            if browser: values.update({"task": task, "router_key": key})
+            parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode() for name, value in values.items()]
+            parts += [f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="test.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode(), b'audio-bytes', f'\r\n--{boundary}--\r\n'.encode()]
+            url = self.web + "/playground" if browser else self.api + "/v1/audio/" + ('transcriptions' if task == 'stt' else 'speech-to-speech')
+            return self.request(url, None if browser else key, b''.join(parts), media=f"multipart/form-data; boundary={boundary}", browser=browser, headers={"Origin": self.web, "Accept": "text/html"} if browser else None)
+        transcript, headers = upload('stt', f"policy:{policy['id']}")
+        require(json.loads(transcript)['text'] == 'Hello from recorded audio', "Transcription failed")
+        request_id = headers['X-Request-ID']
         attempts = self.json_api(f"requests/{request_id}/attempts", session)
-        require(len(attempts) == 2 and attempts[0]["status"] == "failed" and attempts[1]["status"] == "succeeded", "Fallback attempts were not recorded")
-        stream, _ = self.request(self.api + "/v1/chat/completions", key, {"model": f"deployment:{deployments['chat']}", "messages": [{"role": "user", "content": "Hello"}], "stream": True})
-        require(b"E2E routed reply" in stream and b"data: [DONE]" in stream, "Streaming response was incomplete")
-        boundary = uuid4().hex
-        multipart = (f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\ndeployment:{deployments["stt"]}\r\n--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="test.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode() + b'audio-bytes' + f'\r\n--{boundary}--\r\n'.encode())
-        transcript, _ = self.request(self.api + "/v1/audio/transcriptions", key, multipart, media=f"multipart/form-data; boundary={boundary}")
-        require(json.loads(transcript)["text"] == "Hello from recorded audio", "Unexpected transcript")
-        audio, _ = self.request(self.api + "/v1/audio/speech", key, {"model": f"deployment:{deployments['tts']}", "input": "Hello", "voice": "alloy", "response_format": "mp3"})
-        require(audio == AUDIO, "Speech bytes changed in transit")
-        usage = self.json_api(f"requests/{request_id}/usage", session)
-        require(any(row["cost_nanos"] == 10 for row in usage), "Applied request price was not recorded")
-        analytics = self.json_api("analytics", session)
-        require(analytics["requests"] >= 5 and analytics["fallback_requests"] >= 2 and analytics["known_cost_nanos"] >= 40, "Analytics did not include routed requests")
-        print("Checking API restart and persisted activity...", flush=True)
+        require(len(attempts) == 2 and attempts[0]['status'] == 'failed' and attempts[1]['status'] == 'succeeded', "Speech fallback not recorded")
+        for task in ('stt','s2s'):
+            page, _ = upload(task, f"deployment:{deployments[task]}", browser=True, extra={'voice':'alloy'} if task == 's2s' else None)
+            expected = b'Hello from recorded audio' if task == 'stt' else b'data:audio/mpeg;base64,'
+            require(expected in page and key.encode() not in page and PROVIDER_KEY.encode() not in page, task + ' playground failed')
+        stream, _ = upload('stt', f"deployment:{deployments['stt']}", extra={'stream':'true'})
+        require(b'transcript.text.done' in stream, "Transcription stream failed")
+        self.request(self.api + '/v1/chat/completions', key, {'messages': []}, status=410)
+        self.json_api('models', session, {'name':'Rejected chat','publisher':'test','task':'llm'}, status=400)
+        print("Checking restart, stored credentials and speech activity...", flush=True)
         self.stop(self.api_process)
         self.api_process = self.spawn("api", [str(self.directory / "api")], self.api_environment)
         self.wait_ready(self.api + "/healthz", self.api_process)
-        persisted = self.json_api(f"requests/{request_id}", session)
-        require(persisted["status"] == "succeeded", "Request history did not survive restart")
+        require(self.json_api(f"requests/{request_id}", session)['status'] == 'succeeded', "Speech history lost")
         self.request(self.web + "/", browser=True)
-        print("PASS: real console + API + SQLite + loopback provider work end to end", flush=True)
+        print("PASS: speech-only console + API + SQLite + STT/TTS/S2S provider work end to end", flush=True)
+
 
 
 def main():

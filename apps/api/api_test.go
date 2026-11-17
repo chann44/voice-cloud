@@ -286,7 +286,7 @@ func TestCustomAndLocalConnections(t *testing.T) {
 				`{"name":%q,"adapter":%q,"location_kind":%q,"base_url":%q,"enabled":false}`,
 				"My "+provider.adapter+" endpoint", provider.adapter, provider.location, provider.url), 201))
 			model := jsonObject(t, a.call("POST", "/v1/models", fmt.Sprintf(
-				`{"name":%q,"publisher":"self","task":"llm"}`, "my-model-"+provider.adapter), 201))
+				`{"name":%q,"publisher":"self","task":"stt"}`, "my-model-"+provider.adapter), 201))
 			deployment := jsonObject(t, a.call("POST", "/v1/deployments", fmt.Sprintf(
 				`{"name":%q,"model_id":%.0f,"connection_id":%.0f,"upstream_model_id":"my-model","enabled":false}`,
 				"My "+provider.adapter+" deployment", model["id"], connection["id"]), 201))

@@ -1,0 +1,32 @@
+{
+  "dataset": "openslr/librispeech_asr",
+  "config": "clean",
+  "split": "test",
+  "source": "https://www.openslr.org/12",
+  "license": "CC-BY-4.0",
+  "purpose": "Public human-recorded English STT baseline; not generated speech or a claim of domain coverage",
+  "samples": [
+    {
+      "file": "6930-75918-0000.flac",
+      "dataset_id": "6930-75918-0000",
+      "reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
+      "bytes": 74138,
+      "sha256": "9ce35224156f071ab58eb7feb8a5ceae600f6f9f353da2a6cbf797b6b1ac8a23",
+      "source_row": 0,
+      "duration_seconds": 3.505,
+      "sample_rate": 16000,
+      "channels": 1
+    },
+    {
+      "file": "6930-75918-0001.flac",
+      "dataset_id": "6930-75918-0001",
+      "reference_text": "THE ENGLISH FORWARDED TO THE FRENCH BASKETS OF FLOWERS OF WHICH THEY HAD MADE A PLENTIFUL PROVISION TO GREET THE ARRIVAL OF THE YOUNG PRINCESS THE FRENCH IN RETURN INVITED THE ENGLISH TO A SUPPER WHICH WAS TO BE GIVEN THE NEXT DAY",
+      "bytes": 287636,
+      "sha256": "3dfad7eb0793eddd5040d04f1f2f3046ceeee39e0ec461794856a350e1bd728e",
+      "source_row": 1,
+      "duration_seconds": 14.225,
+      "sample_rate": 16000,
+      "channels": 1
+    }
+  ]
+}

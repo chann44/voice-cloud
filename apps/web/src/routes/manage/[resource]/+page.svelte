@@ -30,6 +30,13 @@
 
 <PageHeader {title} path={`manage / ${data.resource}`} />
 <ConfigurationTable resource={data.resource} configuration={data} {records} />
+{#if data.resource === 'connections'}<section class="section">
+	<div class="section-heading"><h2>Implemented adapters</h2><span class="muted">{data.adapters.length} adapters · HTTP routing</span></div>
+	<p class="muted text-xs mb-3">These adapters can serve the tasks listed below. A provider connection still needs valid credentials, model access, and verified deployment capabilities. Other seeded providers are configuration templates.</p>
+	<div class="panel table-wrap"><table class="data-table"><thead><tr><th>Adapter</th><th>Tasks</th><th>Protocol</th><th>Models</th><th>Limits / setup</th></tr></thead><tbody>
+		{#each data.adapters as adapter}<tr><td>{adapter.id}</td><td>{adapter.tasks.join(', ')}</td><td>{adapter.protocol}</td><td>{adapter.discovery ? 'Live catalog' : 'Manual registration'}</td><td>{adapter.notes}</td></tr>{/each}
+	</tbody></table></div>
+</section>{/if}
 {#if data.resource === 'deployments'}<section class="section">
 		<div class="section-heading">
 			<h2>Health & languages</h2>

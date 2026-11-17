@@ -23,7 +23,7 @@ INSERT INTO models (name, publisher, task, version) VALUES (?, ?, ?, ?) RETURNIN
 SELECT * FROM models WHERE id = ?;
 
 -- name: ListModels :many
-SELECT * FROM models ORDER BY publisher, name, task, version, id;
+SELECT * FROM models WHERE task IN ('stt','tts','s2s') ORDER BY publisher, name, task, version, id;
 
 -- name: UpdateModel :one
 UPDATE models SET name = ?, publisher = ?, task = ?, version = ?, updated_at = ?
@@ -72,7 +72,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *;
 SELECT * FROM routing_policies WHERE id = ?;
 
 -- name: ListRoutingPolicies :many
-SELECT * FROM routing_policies ORDER BY name, id;
+SELECT * FROM routing_policies WHERE task IN ('stt','tts','s2s') ORDER BY name, id;
 
 -- name: UpdateRoutingPolicy :one
 UPDATE routing_policies SET name = ?, task = ?, objective = ?, fallback_enabled = ?,
@@ -305,3 +305,16 @@ UPDATE requests SET routing_snapshot_json = ? WHERE id = ? AND status = 'running
 SELECT * FROM attempts
 WHERE deployment_id = ? AND started_at >= ? AND status IN ('succeeded', 'failed')
 ORDER BY started_at DESC, id DESC LIMIT 20;
+
+-- name: GetProviderSecret :one
+SELECT * FROM provider_secrets WHERE connection_id = ?;
+
+-- name: ListProviderSecrets :many
+SELECT * FROM provider_secrets ORDER BY connection_id;
+
+-- name: SetProviderSecret :exec
+INSERT INTO provider_secrets (connection_id, ciphertext, updated_at) VALUES (?, ?, ?)
+ON CONFLICT (connection_id) DO UPDATE SET ciphertext=excluded.ciphertext, updated_at=excluded.updated_at;
+
+-- name: DeleteProviderSecret :exec
+DELETE FROM provider_secrets WHERE connection_id = ?;

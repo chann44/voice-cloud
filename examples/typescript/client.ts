@@ -28,17 +28,6 @@ async function post(path: string, body: Record<string, unknown> | FormData): Pro
   return response;
 }
 
-export async function chat(prompt: string): Promise<string> {
-  const response = await post('chat/completions', {
-    model: required('LLM_MODEL'),
-    messages: [{ role: 'user', content: prompt }],
-  });
-  const result = await response.json() as { choices?: { message?: { content?: unknown } }[] };
-  const text = result.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) throw new Error('Chat response did not contain text');
-  return text;
-}
-
 export async function transcribe(path: string): Promise<string> {
   const form = new FormData();
   form.set('model', required('STT_MODEL'));
@@ -73,4 +62,18 @@ export function requireNewOutput(path: string): void {
 
 export async function saveAudio(path: string, audio: ArrayBuffer): Promise<void> {
   await writeFile(path, new Uint8Array(audio), { flag: 'wx' });
+}
+
+export async function speechToSpeech(path: string): Promise<ArrayBuffer> {
+  const form = new FormData();
+  form.set('model', required('S2S_MODEL'));
+  form.set('file', new Blob([await readFile(path)]), basename(path));
+  form.set('response_format', 'mp3');
+  if (process.env.VOICE) form.set('voice', process.env.VOICE);
+  if (process.env.TARGET_LANGUAGE) form.set('target_language', process.env.TARGET_LANGUAGE);
+  const response = await post('audio/speech-to-speech', form);
+  if (!(response.headers.get('content-type') ?? '').startsWith('audio/')) throw new Error('Expected audio from the speech-to-speech model');
+  const audio = await response.arrayBuffer();
+  if (!audio.byteLength) throw new Error('Speech response was empty');
+  return audio;
 }

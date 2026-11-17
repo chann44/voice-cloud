@@ -32,7 +32,7 @@ class MigrationTest(unittest.TestCase):
         self.make('db-up')
         with sqlite3.connect(self.path) as actual:
             original_schema = schema(actual)
-            self.assertEqual(len([row for row in original_schema if row[0] == 'table']), 14)
+            self.assertEqual(len([row for row in original_schema if row[0] == 'table']), 15)
             actual.execute("""
                 INSERT INTO connections (name, adapter, location_kind, base_url)
                 VALUES ('test', 'whisper', 'local', 'http://localhost:9000')
@@ -42,6 +42,11 @@ class MigrationTest(unittest.TestCase):
         self.make('db-version')
         with sqlite3.connect(self.path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM connections').fetchone(), (1,))
+        self.make('db-down')  # Speech task constraints; no data is removed.
+        self.make('db-down')
+        with sqlite3.connect(self.path) as db:
+            self.assertNotIn('provider_secrets', [row[1] for row in schema(db)])
+            self.assertIn('requests_active_started', [row[1] for row in schema(db)])
         self.make('db-down')
         with sqlite3.connect(self.path) as db:
             self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 14)
@@ -78,7 +83,7 @@ class MigrationTest(unittest.TestCase):
         self.make('db-backup', f'BACKUP={backup}')
         with sqlite3.connect(backup) as db:
             self.assertEqual(db.execute('PRAGMA integrity_check').fetchone(), ('ok',))
-            self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 14)
+            self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 15)
         before = backup.read_bytes()
         self.assertNotEqual(
             self.make('db-backup', f'BACKUP={backup}', check=False).returncode, 0,
@@ -117,6 +122,38 @@ class MigrationTest(unittest.TestCase):
             """).fetchone(),
                 (7, 'Existing route', 'llm', '{"location_kind":"local"}', '{}'))
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_speech_upgrade_preserves_history_credentials_and_foreign_keys(self):
+        self.path.parent.mkdir(parents=True)
+        subprocess.run(['goose', '-env=none', '-dir', 'db/migrations', 'sqlite3',
+                        str(self.path), 'up-to', '6'], cwd=ROOT, capture_output=True,
+                       text=True, check=True)
+        with sqlite3.connect(self.path) as database:
+            database.execute('PRAGMA foreign_keys=ON')
+            database.executescript("""
+                INSERT INTO connections(id,name,adapter,location_kind,base_url) VALUES(11,'Legacy account','custom','local','http://localhost:9000');
+                INSERT INTO models(id,name,publisher,task) VALUES(12,'Legacy text model','test','llm');
+                INSERT INTO deployments(id,name,model_id,connection_id,upstream_model_id) VALUES(13,'Legacy deployment',12,11,'legacy');
+                INSERT INTO routing_policies(id,name,task) VALUES(14,'Legacy policy','llm');
+                INSERT INTO policy_targets(policy_id,deployment_id) VALUES(14,13);
+                INSERT INTO api_keys(id,name,key_hash,key_prefix,default_policy_id) VALUES(15,'Existing app','hash','prefix',14);
+                INSERT INTO requests(id,api_key_id,task,transport,policy_id,routing_snapshot_json,status,started_at,finished_at) VALUES('r16',15,'llm','http',14,'{}','succeeded',1,2);
+                INSERT INTO attempts(id,request_id,deployment_id,attempt_number,status,started_at,finished_at,selection_reason) VALUES('a17','r16',13,1,'succeeded',1,2,'legacy');
+            """)
+            database.execute('INSERT INTO provider_secrets(connection_id,ciphertext,updated_at) VALUES(11,?,1)', (bytes(range(40)),))
+        self.make('db-up')
+        with sqlite3.connect(self.path) as database:
+            self.assertEqual(database.execute('PRAGMA foreign_key_check').fetchall(), [])
+            self.assertEqual(database.execute('SELECT model_id,connection_id FROM deployments').fetchone(), (12,11))
+            self.assertEqual(database.execute('SELECT task FROM requests').fetchone(), ('llm',))
+            self.assertEqual(database.execute('SELECT request_id FROM attempts').fetchone(), ('r16',))
+            self.assertEqual(database.execute('SELECT ciphertext FROM provider_secrets').fetchone(), (bytes(range(40)),))
+            database.execute("INSERT INTO models(name,publisher,task) VALUES('Native S2S','test','s2s')")
+        # A rollback must fail rather than delete new speech-to-speech registrations.
+        self.assertNotEqual(self.make('db-down', check=False).returncode, 0)
+        with sqlite3.connect(self.path) as database:
+            self.assertEqual(database.execute('PRAGMA foreign_key_check').fetchall(), [])
+            self.assertEqual(database.execute("SELECT task FROM models WHERE name='Native S2S'").fetchone(), ('s2s',))
 
 
 if __name__ == '__main__':

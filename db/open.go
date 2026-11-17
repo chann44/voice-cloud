@@ -39,7 +39,7 @@ func Open(path string) (*sql.DB, error) {
 }
 
 // SchemaVersion changes with the latest checked-in Goose migration.
-const SchemaVersion = 5
+const SchemaVersion = 7
 
 func ValidateSchema(ctx context.Context, database DBTX) error {
 	var version int64
@@ -50,7 +50,8 @@ func ValidateSchema(ctx context.Context, database DBTX) error {
 		return fmt.Errorf("expected schema version %d, found %d", SchemaVersion, version)
 	}
 	for table, model := range map[string]any{
-		"api_keys": ApiKey{}, "attempts": Attempt{}, "attempt_usage": AttemptUsage{},
+		"provider_secrets": ProviderSecret{},
+		"api_keys":         ApiKey{}, "attempts": Attempt{}, "attempt_usage": AttemptUsage{},
 		"connections": Connection{}, "deployments": Deployment{}, "deployment_health": DeploymentHealth{},
 		"deployment_languages": DeploymentLanguage{}, "models": Model{}, "policy_targets": PolicyTarget{},
 		"requests": Request{}, "routing_policies": RoutingPolicy{}, "users": User{},

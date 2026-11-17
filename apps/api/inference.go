@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -123,26 +121,6 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	if _, err = a.queries.StartRequest(ctx, id); err != nil {
 		return err
 	}
-	decision := routeDecision{Status: "disabled"}
-	if policy.ID != 0 && policy.DecisionJson != "{}" {
-		deployments, decision = a.decideRoute(ctx, policy, input, deployments)
-		snapshotValue["decision"] = decision
-		snapshotValue["deployment_ids"] = deploymentIDs(deployments)
-		snapshot, err = json.Marshal(snapshotValue)
-		if err != nil {
-			return err
-		}
-		saveCtx, stopSave := context.WithTimeout(context.Background(), 5*time.Second)
-		_, err = a.queries.SetRequestRoutingSnapshot(saveCtx, db.SetRequestRoutingSnapshotParams{ID: id, RoutingSnapshotJson: string(snapshot)})
-		stopSave()
-		if err != nil {
-			return err
-		}
-		if ctx.Err() != nil {
-			code = "timeout"
-			return httpError{504, "inference cancelled or timed out"}
-		}
-	}
 	attempts := policy.MaxAttempts
 	if policy.FallbackEnabled != 1 {
 		attempts = 1
@@ -160,12 +138,6 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		reason := "policy_priority_" + policy.Objective
-		if decision.Status == "selected" {
-			reason = "decision_selected"
-			if index > 0 {
-				reason = "decision_fallback_" + policy.Objective
-			}
-		}
 		_, err = a.queries.CreateAttempt(ctx, db.CreateAttemptParams{ID: attemptID, RequestID: id, DeploymentID: deployment.ID, AttemptNumber: int64(index + 1), StartedAt: time.Now().UnixMilli(), SelectionReason: reason})
 		if err != nil {
 			return err
@@ -267,24 +239,21 @@ func (a *api) dispatchInference(ctx context.Context, input *inferenceInput, depl
 	if connection.Enabled != 1 {
 		return nil, "connection_disabled", nil
 	}
-	switch connection.Adapter {
-	case "openai", "openai-compatible", "local", "custom", "whisper":
-	default:
-		return nil, "unsupported_adapter", nil
+	if reason := adapterRequestReason(connection.Adapter, input, deployment); reason != "" {
+		return nil, reason, nil
 	}
-	endpoint, err := url.Parse(connection.BaseUrl)
-	if err != nil || endpoint.User != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+	if connection.Adapter == "deepgram" || connection.Adapter == "elevenlabs" {
+		return a.dispatchSpeech(ctx, input, deployment, connection)
+	}
+	endpoint, err := connectionEndpoint(connection)
+	if err != nil {
 		return nil, "invalid_base_url", nil
 	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/")
-	if !strings.HasSuffix(endpoint.Path, "/v1") {
-		endpoint.Path += "/v1"
-	}
 	switch input.task {
-	case "llm":
-		endpoint.Path += "/chat/completions"
 	case "tts":
 		endpoint.Path += "/audio/speech"
+	case "s2s":
+		endpoint.Path += "/audio/speech-to-speech"
 	case "stt":
 		endpoint.Path += "/audio/transcriptions"
 	}
@@ -298,12 +267,8 @@ func (a *api) dispatchInference(ctx context.Context, input *inferenceInput, depl
 		return nil, "invalid_base_url", err
 	}
 	request.Header.Set("Content-Type", contentType)
-	if connection.CredentialRef.Valid {
-		credential := strings.TrimSpace(os.Getenv(connection.CredentialRef.String))
-		if credential == "" || strings.ContainsAny(credential, "\r\n") {
-			return nil, "credential_unavailable", nil
-		}
-		request.Header.Set("Authorization", "Bearer "+credential)
+	if err := a.authenticateProvider(ctx, request, connection); err != nil {
+		return nil, "credential_unavailable", nil
 	}
 	response, err := inferenceClient.Do(request)
 	if err != nil {

@@ -36,7 +36,7 @@ def post(path, body, content_type="application/json"):
     }, method="POST")
     try:
         with build_opener(NoRedirect()).open(request, timeout=330) as response:
-            if path == "/v1/audio/speech":
+            if path in ("/v1/audio/speech", "/v1/audio/speech-to-speech"):
                 content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
                 if not content_type.startswith("audio/") and content_type != "application/octet-stream":
                     raise RuntimeError(f"Expected audio, received {content_type or 'no Content-Type'}")
@@ -63,46 +63,15 @@ def json_response(data):
     return result
 
 
-def chat(prompt):
-    result = json_response(post("/v1/chat/completions", {
-        "model": model("LLM_MODEL"),
-        "messages": [{"role": "user", "content": prompt}],
-    }))
-    try:
-        reply = result["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as error:
-        raise RuntimeError("Chat response has no assistant message") from error
-    if not isinstance(reply, str) or not reply.strip():
-        raise RuntimeError("Chat response has no text content")
-    return reply
-
-
 def transcribe(filename):
-    path = Path(filename)
     selected_model = model("STT_MODEL")
     language = os.environ.get("AUDIO_LANGUAGE", "en")
     if language and not re.fullmatch(r"[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*", language):
-        raise ValueError("AUDIO_LANGUAGE must be a language tag, such as en or en-US")
-    if path.stat().st_size > 32 * 1024 * 1024:
-        raise ValueError("The audio exceeds the router's 32 MiB request limit")
-    audio = path.read_bytes()
-    if not audio:
-        raise ValueError("The audio file is empty")
-    boundary = uuid4().hex
+        raise ValueError("AUDIO_LANGUAGE must be a language tag")
     fields = {"model": selected_model, "response_format": "json"}
-    if language:
-        fields["language"] = language
-    parts = []
-    for name, value in fields.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-    parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{quote(path.name, safe="")}"\r\n'
-                  f'Content-Type: {mime}\r\n\r\n').encode())
-    parts.extend([audio, f"\r\n--{boundary}--\r\n".encode()])
-    body = b"".join(parts)
-    if len(body) > 32 * 1024 * 1024:
-        raise ValueError("The audio and multipart fields exceed the router's 32 MiB limit")
-    result = json_response(post("/v1/audio/transcriptions", body, f"multipart/form-data; boundary={boundary}"))
+    if language: fields["language"] = language
+    body, content_type = multipart_upload(filename, fields)
+    result = json_response(post("/v1/audio/transcriptions", body, content_type))
     text = result.get("text")
     if not isinstance(text, str) or not text.strip():
         raise RuntimeError("Transcription response has no text")
@@ -124,3 +93,36 @@ def speech(text, output):
         raise RuntimeError("Speech response contains no audio")
     with path.open("xb") as destination:
         destination.write(audio)
+
+
+def multipart_upload(filename, fields):
+    path = Path(filename)
+    if path.stat().st_size > 32 * 1024 * 1024:
+        raise ValueError("The audio exceeds the router's 32 MiB request limit")
+    audio = path.read_bytes()
+    if not audio:
+        raise ValueError("The audio file is empty")
+    boundary = uuid4().hex
+    parts = []
+    for name, value in fields.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{quote(path.name, safe="")}"\r\n'
+                  f'Content-Type: {mime}\r\n\r\n').encode())
+    parts.extend([audio, f"\r\n--{boundary}--\r\n".encode()])
+    body = b"".join(parts)
+    if len(body) > 32 * 1024 * 1024:
+        raise ValueError("The audio and multipart fields exceed the router's 32 MiB limit")
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def speech_to_speech(filename, output):
+    path = Path(output)
+    if path.exists(): raise FileExistsError(f"Output already exists: {path}")
+    fields = {"model": model("S2S_MODEL"), "response_format": "mp3"}
+    if os.environ.get("VOICE"): fields["voice"] = os.environ["VOICE"]
+    if os.environ.get("TARGET_LANGUAGE"): fields["target_language"] = os.environ["TARGET_LANGUAGE"]
+    body, content_type = multipart_upload(filename, fields)
+    audio = post("/v1/audio/speech-to-speech", body, content_type)
+    if not audio: raise RuntimeError("Speech response contains no audio")
+    with path.open("xb") as destination: destination.write(audio)

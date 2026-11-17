@@ -38,6 +38,10 @@ replacing existing configuration. Seeded providers remain disabled.
 
 ## Provider credentials
 
+For dashboard key entry, configure `SECRETS_MASTER_KEY` once using the
+[encrypted credential store guide](secrets.md), then save keys under **Providers**.
+The following environment-reference flow remains available as an alternative.
+
 Pass only the provider secrets you configure to the backend. For example, create
 an untracked `docker/providers.compose.yml` file:
 
@@ -65,21 +69,6 @@ For a model server on your Docker Desktop host, use `host.docker.internal` as it
 hostname; `localhost` inside the backend means that container. Configure reverse
 proxies to permit 32 MiB request bodies, a five-minute request duration, and
 unbuffered streaming responses.
-
-For [decision-assisted LLM routing](inference.md#decision-assisted-llm-routing),
-add the decision service's key explicitly to the same override:
-
-```yaml
-services:
-  backend:
-    environment:
-      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?Set TYPESAFE_API_KEY in your shell}
-```
-
-Set the policy's `decision_json.credential_ref` to `TYPESAFE_API_KEY`. This
-enables a separate text-processing service only for that policy; its URL and
-model belong in the policy's Decision model field. For a local service on the
-Docker Desktop host, use `host.docker.internal` rather than `localhost`.
 
 For database maintenance, override the backend command, for example:
 

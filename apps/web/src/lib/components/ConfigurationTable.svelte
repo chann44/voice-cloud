@@ -35,14 +35,14 @@
 		),
 	);
 	const columns = $derived(
-		fields.filter((field) => field.kind !== 'json' && field.key !== 'credential_ref').slice(0, 6),
+		fields.filter((field) => field.kind !== 'json' && field.kind !== 'password' && !['credential_ref', 'remove_api_key'].includes(field.key)).slice(0, 6),
 	);
 	function edit(row?: Record<string, unknown>) {
 		editing = row ? Number(row.id) : null;
 		draft = Object.fromEntries(
 			fields.map((field) => [
 				field.key,
-				row?.[field.key] !== undefined
+				field.kind === 'password' ? '' : row?.[field.key] !== undefined
 					? typeof row[field.key] === 'object'
 						? JSON.stringify(row[field.key], null, 2)
 						: String(row[field.key])
@@ -76,7 +76,7 @@
 			<table class="data-table">
 				<thead
 					><tr
-						><th>ID</th>{#each columns as column}<th>{column.label}</th>{/each}<th></th></tr
+						><th>ID</th>{#each columns as column}<th>{column.label}</th>{/each}{#if resource === 'models'}<th>Provider / route</th>{:else if resource === 'connections'}<th>Credential</th>{/if}<th></th></tr
 					></thead
 				><tbody
 					>{#each rows as row}<tr
@@ -85,7 +85,12 @@
 											class="table-link"
 											onclick={() => onview?.(Number(row.id))}>{String(row.name)}</button
 										>{:else}{label(column.key, row[column.key])}{/if}</td
-								>{/each}<td
+								>{/each}{#if resource === 'models'}<td>
+									{#each configuration.deployments.filter((deployment) => deployment.model_id === row.id) as deployment}
+										{@const connection = configuration.connections.find((item) => item.id === deployment.connection_id)}
+										<div class="mb-2"><span>{connection?.name ?? 'Unknown provider'}</span><br /><span class="muted">{!connection?.inference_supported ? 'Adapter unavailable' : !connection.enabled ? 'Provider disabled' : !connection.credential_ready ? 'Credentials missing' : !deployment.enabled ? 'Deployment disabled' : 'Enabled · verify with a request'}</span><br /><code>deployment:{deployment.id}</code></div>
+									{:else}<a class="table-link" href="/manage/deployments">Add deployment →</a>{/each}
+								</td>{:else if resource === 'connections'}<td>{row.has_api_key ? 'Saved encrypted key' : row.credential_ref ? 'Environment reference' : 'No API key'}</td>{/if}<td
 								><div class="flex justify-end gap-1">
 									{#if onview}<Button
 											size="xs"
@@ -127,8 +132,8 @@
 			use:enhance={() => {
 				busy = true;
 				return async ({ result, update }) => {
-					await update({ reset: false });
-					busy = false;
+					draft.api_key = '';
+					try { await update({ reset: false }); } finally { busy = false; }
 					if (result.type === 'success') {
 						open = false;
 						toast.success('Saved');
@@ -159,7 +164,9 @@
 								rows="3"
 								class="native-textarea"
 							></textarea>{:else if field.kind === 'select'}{@const choices =
-								field.key === 'model_id'
+								field.key === 'adapter'
+								? [...configuration.adapters.map((adapter) => ({value: adapter.id, label: `${adapter.id} · ${adapter.tasks.join(', ')}`})), ...(!configuration.adapters.some((adapter) => adapter.id === draft.adapter) && draft.adapter ? [{value: draft.adapter, label: `${draft.adapter} (unavailable)`}] : [])]
+								: field.key === 'model_id'
 									? configuration.models.map((model) => ({
 											value: String(model.id),
 											label: model.name,
@@ -189,7 +196,8 @@
 								/>{/if}{:else}<Input
 								id={`config-${field.key}`}
 								name={field.key}
-								type={field.kind === 'number' ? 'number' : 'text'}
+								type={field.kind === 'number' ? 'number' : field.kind === 'password' ? 'password' : 'text'}
+								autocomplete={field.kind === 'password' ? 'new-password' : undefined}
 								min={field.kind === 'number' ? 1 : undefined}
 								bind:value={draft[field.key]}
 								readonly={!!editing && field.immutable}

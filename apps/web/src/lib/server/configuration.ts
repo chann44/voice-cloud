@@ -30,6 +30,8 @@ export function configurationActions(resource: (event: RequestEvent) => string) 
 						location_kind: text('location_kind'),
 						base_url: text('base_url'),
 						credential_ref: text('credential_ref') || null,
+						api_key: text('api_key'),
+						remove_api_key: form.has('remove_api_key'),
 						enabled: form.has('enabled'),
 					};
 				if (kind === 'models')

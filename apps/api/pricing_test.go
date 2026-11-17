@@ -3,10 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"voice-cloud/db"
 )
@@ -32,52 +29,6 @@ func TestPricingRatesAndOverflow(t *testing.T) {
 		if _, err := parsePricing(raw); err == nil {
 			t.Fatalf("invalid pricing accepted %s", raw)
 		}
-	}
-}
-
-func TestReportedUnitCostsAndMissingUsage(t *testing.T) {
-	for _, reported := range []bool{false, true} {
-		t.Run(fmt.Sprint(reported), func(t *testing.T) {
-			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if reported {
-					fmt.Fprint(w, `{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
-				} else {
-					fmt.Fprint(w, `{"choices":[{"message":{"content":"Hello"}}]}`)
-				}
-			}))
-			defer provider.Close()
-			a, key := setupInference(t, "llm", provider.URL)
-			if _, err := a.db.Exec(`UPDATE deployments SET pricing_json='{"input_token_nanos":10,"output_token_nanos":20}'`); err != nil {
-				t.Fatal(err)
-			}
-			response := callInference(t, a, key, "/v1/chat/completions", "application/json", []byte(`{"messages":[{"role":"user","content":"Hello"}]}`), nil, 200)
-			var cost sql.NullInt64
-			if err := a.db.QueryRow(`SELECT sum(u.cost_nanos) FROM attempt_usage u JOIN attempts a ON a.id=u.attempt_id WHERE a.request_id=?`, response.Header().Get("X-Request-ID")).Scan(&cost); err != nil {
-				t.Fatal(err)
-			}
-			if reported && (!cost.Valid || cost.Int64 != 70) {
-				t.Fatalf("unit cost: %+v", cost)
-			}
-			if !reported && cost.Valid {
-				t.Fatalf("missing usage appeared free: %+v", cost)
-			}
-		})
-	}
-}
-
-func TestEstimatedRoutingCostRequiresKnownBounds(t *testing.T) {
-	deployment := db.Deployment{PricingJson: `{"input_token_nanos":10,"output_token_nanos":20}`}
-	input := &inferenceInput{task: "llm"}
-	if estimatedRoutingCost(input, requestRequirements{contextBudget: 100}, deployment) != nil {
-		t.Fatal("unbounded output got a cost promise")
-	}
-	cost := estimatedRoutingCost(input, requestRequirements{contextBudget: 100, outputTokens: 20}, deployment)
-	if cost == nil || *cost != 1400 {
-		t.Fatalf("bounded text estimate: %v", cost)
-	}
-	if estimatedRoutingCost(input, requestRequirements{contextBudget: 100, outputTokens: 20, vision: true}, deployment) != nil {
-		t.Fatal("image cost guessed from text bytes")
 	}
 }
 

@@ -8,6 +8,7 @@ services:
     init: true
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:-}
       DB_PATH: /data/voice-cloud.db
       API_ADDR: 0.0.0.0:8080
       REQUEST_RETENTION_DAYS: ${REQUEST_RETENTION_DAYS:-30}

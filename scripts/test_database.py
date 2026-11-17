@@ -27,6 +27,9 @@ class DatabaseOperationsTest(unittest.TestCase):
         self.addCleanup(writer.close)
         writer.execute('PRAGMA journal_mode=WAL')
         writer.execute("INSERT INTO models (name,publisher,task) VALUES ('WAL model','test','llm')")
+        writer.execute("INSERT INTO connections (id,name,adapter,location_kind,base_url) VALUES (1,'provider','openai','cloud','https://provider.test')")
+        encrypted = bytes(range(40))
+        writer.execute('INSERT INTO provider_secrets (connection_id,ciphertext,updated_at) VALUES (1,?,1)', (encrypted,))
         writer.commit()
         self.assertTrue(Path(str(self.source) + '-wal').exists())
         backup = self.directory / 'backups' / 'first.db'
@@ -37,6 +40,7 @@ class DatabaseOperationsTest(unittest.TestCase):
         with sqlite3.connect(restored) as actual:
             database.validate(actual)
             self.assertEqual(actual.execute('SELECT name FROM models').fetchall(), [('WAL model',)])
+            self.assertEqual(actual.execute('SELECT ciphertext FROM provider_secrets').fetchone(), (encrypted,))
         self.assertFalse(list(backup.parent.glob('.voice-cloud-*.tmp')))
 
     def test_existing_target_and_invalid_source_are_not_modified(self):

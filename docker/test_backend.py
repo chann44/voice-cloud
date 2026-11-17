@@ -23,6 +23,8 @@ class BackendTest(unittest.TestCase):
 import os, signal, sys
 from pathlib import Path
 name = Path(sys.argv[0]).name
+if name == 'worker' and os.environ.get('SECRETS_MASTER_KEY'):
+    sys.exit(9)
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 Path(os.environ['TEST_STATE'], name + '.pid').write_text(str(os.getpid()))
 if os.environ.get('FAIL_SERVICE') == name:
@@ -31,6 +33,7 @@ signal.pause()
 ''')
             binary.chmod(0o755)
         self.environment = dict(os.environ, PATH=f'{binary_dir}:' + os.environ['PATH'],
+                                SECRETS_MASTER_KEY='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
                                 ADMIN_TOKEN='',
                                 DB_PATH=str(self.directory / 'router.db'),
                                 TEST_STATE=str(self.directory))
@@ -64,7 +67,7 @@ signal.pause()
             time.sleep(0.05)
         self.assertEqual(len(list(self.directory.glob('*.pid'))), 2)
         with sqlite3.connect(self.environment['DB_PATH']) as database:
-            self.assertEqual(database.execute('SELECT count(*) FROM connections').fetchone(), (38,))
+            self.assertEqual(database.execute('SELECT count(*) FROM connections').fetchone(), (34,))
         process.terminate()
         output, _ = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, output)

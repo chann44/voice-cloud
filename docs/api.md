@@ -1,186 +1,75 @@
-# Management API
+# Management and speech API
 
-Run from the repository root:
+Management calls use an authenticated user session token or configured admin token.
+The console handles sessions, CSRF checks and role restrictions. Members can read
+configuration; administrators can mutate it. Inference uses separate router keys.
+See [accounts](users.md), [speech endpoints](inference.md) and [encrypted provider keys](secrets.md).
 
-```sh
-make api-run
+## Configuration
+
+`GET/POST /v1/connections`, `/v1/models`, `/v1/deployments`, `/v1/policies` list/create
+resources. `GET/PUT/DELETE /v1/<resource>/<id>` reads/replaces/deletes one resource.
+PUT replaces editable fields; preserve current values when updating. Referenced
+resources cannot be deleted. Model tasks and deployment model/connection/upstream
+IDs are immutable; create a new resource when those identities change.
+
+Tasks are **`stt`, `tts`, `s2s` only**. Models require `name`, `publisher`, `task`,
+optional `version`. A deployment links `model_id`, `connection_id`, and
+`upstream_model_id`, with explicit `capabilities_json`, `pricing_json`, and
+`settings_json` objects. See [capabilities and limits](inference.md).
+
+Policies contain `name`, `task`, `objective` (`balanced`, `latency`, `cost`,
+`quality`), `fallback_enabled`, `max_attempts`, and `constraints_json`. Defaults
+are balanced, fallback enabled, two attempts. Legacy `decision_json` is readable
+but only `{}` is accepted on new writes; decision models are unavailable.
+
+`GET /v1/policies/:id/targets` lists targets. `PUT/DELETE
+/v1/policies/:id/targets/:deployment` adds/removes one; PUT accepts `{"priority":0}`.
+`GET /v1/deployments/:id/languages` lists language tags; `PUT/DELETE
+/v1/deployments/:id/languages/:language` maintains them. `GET
+/v1/deployments/:id/health` reports reachability, not model-quality benchmarks.
+
+## Providers and credentials
+
+Connections contain `name`, `adapter`, `location_kind` (`local`/`cloud`),
+`base_url`, `enabled`, and optional environment `credential_ref`.
+POST/PUT accepts write-only `api_key` (up to 4096 bytes; no whitespace/control
+characters) and `remove_api_key` (boolean). Blank/omitted keys preserve a saved
+key; a nonempty key replaces it and clears the environment reference. Removal
+clears both sources. Replacing and removing together is rejected. Keys and
+connection changes are committed atomically. Changing a saved key's URL requires
+replacing/removing the key. Keys/ciphertext are never returned.
+
+Responses expose `has_api_key`, `secret_storage_available`, `credential_ready`,
+`inference_supported`, and `adapter_support` metadata. These indicate configured
+storage/protocol support, not verified provider account/model entitlement.
+
+`GET /v1/adapters` lists implemented speech adapters and task/discovery limits.
+Administrator-only `POST /v1/connections/:id/discover` fetches the speech catalog;
+manual-registration adapters reject discovery explicitly. Results include
+`id`, `owned_by`, and a speech `task`. Unknown/text entries are omitted.
+`POST /v1/connections/:id/models` atomically registers a model/deployment:
+
+```json
+{"upstream_model_id":"actual-speech-model","task":"s2s","capabilities_json":{"voices":["voice-id"],"response_formats":["mp3"]}}
 ```
 
-Start the web app with `bun run dev` in `apps/web`, then open it to create the first
-administrator with a name, email, and password. The setup route closes once any
-account exists. Administrators can add members from Account settings. Public
-signup is intentionally limited to this initial setup.
+It returns 201 new or 200 existing, preserving edits on repeated imports. The
+connection must be enabled, have available credentials, and support the task.
+This configuration action does not perform paid inference. See [adapter contracts](adapters.md).
 
-The API defaults to `127.0.0.1:8080`. Override `API_ADDR` and `DB_PATH` as needed.
-The web server uses private `API_URL` (default `http://127.0.0.1:8080`); Compose
-sets it to `http://backend:8080`. No API credential is built into frontend assets.
+## Router keys and activity
 
-Authenticate management API calls with a user session bearer token returned by login/signup:
+`POST /v1/api-keys` accepts `name`, optional `default_policy_id`, and optional
+future `expires_at`. It returns the plaintext router key once; store it on your
+application server. `GET /v1/api-keys` and `/v1/api-keys/:id` return metadata;
+`DELETE /v1/api-keys/:id` revokes it. Router keys cannot call management APIs.
 
-```sh
-curl http://127.0.0.1:8080/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"your-password"}'
-```
+`GET /v1/requests?limit=50`, `/v1/requests/:id`,
+`/v1/requests/:id/attempts`, and `/v1/requests/:id/usage` expose activity without
+raw prompts/audio or provider credentials. `GET /v1/analytics` provides rolling
+24-hour request counts, durations and known/unknown configured cost estimates.
+Legacy history is retained; active model/policy catalogs exclude old text tasks.
 
-The console stores this token in an HttpOnly, SameSite=Lax cookie; Secure is set
-on HTTPS. The Go API accepts bearer tokens, not browser cookies. SvelteKit checks
-same-origin form submissions and forwards sessions on the server. Sessions last
-seven days and are revoked on logout. Use HTTPS and configure `ORIGIN` at your
-reverse proxy before external access.
-
-`ADMIN_TOKEN` is optional legacy machine access; if set it must have at least 32
-characters. It is not needed for setup, login, or the frontend. Router keys cannot
-access the management API. Members can read shared data and update their own
-name; configuration and member creation require an administrator.
-
-## Endpoints
-
-| Path | Methods | Behavior |
-| --- | --- | --- |
-| `/healthz` | GET | Public database availability check |
-| `/v1/auth/status` | GET | Public `needs_setup` flag |
-| `/v1/auth/signup` | POST | First account only; atomically creates administrator and session |
-| `/v1/auth/login` | POST | Email/password sign-in; returns token, expiry, safe user fields |
-| `/v1/auth/me` | GET, PUT | Current user; PUT accepts a name |
-| `/v1/auth/logout` | POST | Revoke current session |
-| `/v1/users` | POST | Administrator creates a member with name, email, password |
-| `/v1/connections` | GET, POST | List/create provider connections |
-| `/v1/connections/{id}` | GET, PUT, DELETE | Read/replace/delete a connection |
-| `/v1/models` | GET, POST | List/create models |
-| `/v1/models/{id}` | GET, PUT, DELETE | Read/replace/delete a model |
-| `/v1/deployments` | GET, POST | List/create deployments |
-| `/v1/deployments/{id}` | GET, PUT, DELETE | Read/replace/delete a deployment |
-| `/v1/deployments/{id}/health` | GET | Read worker health; stale/changed/disabled results are unknown |
-| `/v1/deployments/{id}/languages` | GET | List supported language tags |
-| `/v1/deployments/{id}/languages/{language}` | PUT, DELETE | Add/remove a language tag |
-| `/v1/policies` | GET, POST | List/create routing policies |
-| `/v1/policies/{id}` | GET, PUT, DELETE | Read/replace/delete a policy |
-| `/v1/policies/{id}/targets` | GET | List target deployments by priority |
-| `/v1/policies/{id}/targets/{deployment}` | PUT, DELETE | Set/remove a target; PUT accepts `{"priority":0}` |
-| `/v1/api-keys` | GET, POST | List/mint router keys |
-| `/v1/api-keys/{id}` | GET, DELETE | Read/revoke a key; revocation preserves history |
-| `/v1/analytics` | GET | Rolling 24-hour totals, hourly traffic, duration percentiles, fallback and partial costs |
-| `/v1/requests` | GET | Paginated request history |
-| `/v1/requests/{request}` | GET | Read one request |
-| `/v1/requests/{request}/attempts` | GET | List provider attempts in order |
-| `/v1/requests/{request}/usage` | GET | List usage across all attempts |
-
-This is the configuration and observability API. Inference uses separate router
-key authentication at `/v1/chat/completions`, `/v1/audio/speech`, and
-`/v1/audio/transcriptions`; see [the inference guide](inference.md). Inference
-records request history, attempts, and usage. The worker records deployment health;
-see [the worker guide](worker.md) for probe configuration. There are no public
-endpoints for fabricating or deleting activity records.
-
-## Request and response conventions
-
-Management POST and PUT bodies use `Content-Type: application/json`. The maximum body is
-1 MiB; unknown fields and trailing JSON are rejected. Language PUT has no body.
-Create returns 201, reads and replacements return 200, and delete/revoke returns
-204. PUT replaces editable fields; it does not merge them.
-
-Lists are JSON arrays, including `[]` when empty. Nullable values use JSON null,
-boolean fields use true/false, and fields ending in `_json` contain JSON objects,
-not serialized strings. Timestamps are Unix milliseconds. Request history accepts
-`?limit=50&offset=0`, with a maximum limit of 100.
-
-Errors have the shape `{"error":"message"}`. Invalid bodies/IDs return 400,
-missing resources 404, database constraint conflicts 409, unsupported content
-types 415, and oversized bodies 413. References prevent deletion of configuration
-that is still in use. Disable a deployment/connection or revoke a key instead.
-
-Model and policy tasks cannot be changed. A deployment's model, connection, and
-upstream model ID cannot be changed; create another deployment for a different
-route. This preserves policy compatibility and historical route identity.
-Policy targets must match the policy task. Capabilities, pricing, settings, and
-constraints accept JSON objects at configuration time. Inference supports only
-the [documented routing constraints and pricing fields](inference.md#policies-and-fallback);
-unsupported constraints fail routing.
-
-Policies also accept `decision_json`, defaulting to `{}`. A nonempty object
-enables [decision-assisted routing](inference.md#decision-assisted-llm-routing)
-for LLM policies only. The API validates its endpoint, model, credential reference,
-timeout, and confidence fields. The console exposes the same JSON field. PUT
-replaces this setting too: omitting it disables decision assistance. No database
-credential value is needed; the referenced environment variable belongs in the
-API process.
-
-## Configure a route
-
-```sh
-curl http://127.0.0.1:8080/v1/connections \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Local","adapter":"whisper","location_kind":"local","base_url":"http://localhost:9000"}'
-
-curl http://127.0.0.1:8080/v1/models \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"large-v3","publisher":"openai","task":"stt"}'
-
-curl http://127.0.0.1:8080/v1/deployments \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Local Whisper","model_id":1,"connection_id":1,"upstream_model_id":"large-v3","capabilities_json":{"streaming":true}}'
-
-curl http://127.0.0.1:8080/v1/policies \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Speech","task":"stt","objective":"latency"}'
-
-curl -X PUT http://127.0.0.1:8080/v1/policies/1/targets/1 \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"priority":0}'
-
-curl http://127.0.0.1:8080/v1/api-keys \
-  -H "Authorization: Bearer $SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"My app","default_policy_id":1}'
-```
-
-The example IDs assume a fresh database; use the IDs returned by each response.
-Connections/deployments default to enabled. Policies default to balanced routing,
-fallback enabled, and two attempts. Supply `enabled:false` or
-`fallback_enabled:false` to disable them. Missing JSON settings default to `{}`.
-Provider secrets stay outside the database; `credential_ref` optionally names an
-environment variable in the API process. Its value becomes the upstream bearer
-credential. See [provider credentials](inference.md#connections-and-credentials).
-
-Router key creation accepts a name, optional default policy ID, and optional
-future `expires_at` timestamp. It returns `{"key":"vc_...","api_key":{...}}`.
-Save the key then: it is shown once, stored as a SHA-256 hash, and never returned
-by list/read endpoints. Router keys cannot call this administration API.
-
-## Checks
-
-```sh
-make api-check
-make db-check
-```
-
-API tests use the real Go SQLite driver and Goose migrations on temporary files,
-without opening network listeners or contacting model providers.
-
-## Console route tests and analytics
-
-Follow [First working route](quickstart.md) to configure and verify an installation.
-The console's **Test a route** page submits a short chat request with a transient
-router key. It uses the same inference endpoint as an application, requests at most
-128 output tokens, and waits one minute. It does not create a special unmetered
-route or save the supplied key.
-
-`GET /v1/analytics` requires management authentication and reports all requests
-started in the rolling 24-hour window. The response includes request status counts,
-provider attempt count, requests with fallback attempts, average and exact
-nearest-rank median/P95 duration for completed requests, and 24 rolling one-hour
-traffic buckets. Duration includes routing and all attempts; it is not a
-provider-only latency measurement. Requests still running have no duration.
-
-`known_cost_nanos` sums stored known or estimated provider and decision costs;
-`decision_cost_nanos` is the decision share. `unknown_cost_attempts` counts
-provider attempts with no known cost or an unknown non-total usage metric;
-`unknown_decisions` counts attempted decisions with no recorded cost.
-`decision_cost_included` is true. These partial estimates are not invoices and do
-not imply that missing usage or unknown costs are free.
+The only inference endpoints are `/v1/audio/transcriptions`, `/v1/audio/speech`,
+and `/v1/audio/speech-to-speech`. The removed chat endpoint returns HTTP 410.

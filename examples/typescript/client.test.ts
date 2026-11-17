@@ -2,10 +2,10 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chat, requireNewOutput, saveAudio, speech, transcribe } from './client';
+import { speechToSpeech, requireNewOutput, saveAudio, speech, transcribe } from './client';
 
 const originalFetch = globalThis.fetch;
-const names = ['VOICE_CLOUD_URL', 'VOICE_CLOUD_API_KEY', 'LLM_MODEL', 'STT_MODEL', 'TTS_MODEL', 'VOICE', 'AUDIO_LANGUAGE'];
+const names = ['VOICE_CLOUD_URL', 'VOICE_CLOUD_API_KEY', 'S2S_MODEL', 'STT_MODEL', 'TTS_MODEL', 'VOICE', 'AUDIO_LANGUAGE'];
 const originalEnv = Object.fromEntries(names.map((name) => [name, process.env[name]]));
 const directories: string[] = [];
 
@@ -21,26 +21,10 @@ afterEach(async () => {
 function configure() {
   Object.assign(process.env, {
     VOICE_CLOUD_URL: 'http://router.test/', VOICE_CLOUD_API_KEY: 'vc_example',
-    LLM_MODEL: 'policy:1', STT_MODEL: 'policy:2', TTS_MODEL: 'policy:3',
+    S2S_MODEL: 'policy:1', STT_MODEL: 'policy:2', TTS_MODEL: 'policy:3',
     VOICE: 'supported-voice', AUDIO_LANGUAGE: 'en',
   });
 }
-
-test('chat sends a router selector and reports HTTP errors with a request ID', async () => {
-  configure();
-  globalThis.fetch = (async (url, options) => {
-    expect(String(url)).toBe('http://router.test/v1/chat/completions');
-    expect(new Headers(options?.headers).get('authorization')).toBe('Bearer vc_example');
-    expect(JSON.parse(String(options?.body))).toEqual({ model: 'policy:1', messages: [{ role: 'user', content: 'Hello' }] });
-    expect(options?.redirect).toBe('error');
-    return Response.json({ choices: [{ message: { content: 'Hi' } }] });
-  }) as typeof fetch;
-  expect(await chat('Hello')).toBe('Hi');
-  globalThis.fetch = (async () => new Response('{"error":"no route"}', { status: 503, headers: { 'x-request-id': 'request-1' } })) as typeof fetch;
-  await expect(chat('Hello')).rejects.toThrow('HTTP 503 (request request-1)');
-  delete process.env.VOICE_CLOUD_API_KEY;
-  await expect(chat('Hello')).rejects.toThrow('Set VOICE_CLOUD_API_KEY');
-});
 
 test('transcription preserves file bytes and lets fetch set the multipart boundary', async () => {
   configure();
@@ -81,4 +65,15 @@ test('speech requires audio and refuses to overwrite an existing file', async ()
   expect([...await readFile(output)]).toEqual([1, 2, 3]);
   globalThis.fetch = (async () => Response.json({ error: 'not audio' })) as typeof fetch;
   await expect(speech('Hello')).rejects.toThrow('Expected audio');
+});
+
+test('native speech-to-speech uploads audio without a text pipeline', async () => {
+ configure(); const directory=await mkdtemp(join(tmpdir(),'native-speech-')); directories.push(directory);
+ const input=join(directory,'audio.wav'); await writeFile(input,'native input');
+ globalThis.fetch=(async (url,init)=>{
+  expect(String(url)).toBe('http://router.test/v1/audio/speech-to-speech');
+  const form=init?.body as FormData;expect(form.get('model')).toBe('policy:1');expect(await (form.get('file') as File).text()).toBe('native input');
+  return new Response('ID3audio',{headers:{'content-type':'audio/mpeg'}});
+ }) as typeof fetch;
+ expect((await speechToSpeech(input)).byteLength).toBe(8);
 });

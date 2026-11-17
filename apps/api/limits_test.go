@@ -78,7 +78,7 @@ func TestBusyInstanceRejectsBeforeReadingBody(t *testing.T) {
 	defer release()
 	api := &api{db: test.db, queries: db.New(test.db), gate: gate}
 	body := &countedBody{}
-	request := httptest.NewRequest("POST", "/v1/chat/completions", body)
+	request := httptest.NewRequest("POST", "/v1/audio/speech", body)
 	request.Header.Set("Authorization", "Bearer "+created["key"].(string))
 	request.Header.Set("Content-Type", "application/json")
 	err = api.inference(httptest.NewRecorder(), request)
@@ -109,12 +109,12 @@ func TestConcurrentTrafficStaysWithinCapacity(t *testing.T) {
 		case <-r.Context().Done():
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		fmt.Fprint(w, `ID3-audio`)
 	}))
 	defer provider.Close()
 	defer once.Do(func() { close(release) })
-	a, key := setupInference(t, "llm", provider.URL)
+	a, key := setupInference(t, "tts", provider.URL)
 	server := httptest.NewServer(a.handler)
 	defer func() { once.Do(func() { close(release) }); server.Close() }()
 	results := make(chan int, 12)
@@ -122,7 +122,7 @@ func TestConcurrentTrafficStaysWithinCapacity(t *testing.T) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			request, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"Hi"}]}`))
+			request, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/v1/audio/speech", strings.NewReader(`{"input":"Hi","voice":"alloy"}`))
 			request.Header.Set("Authorization", "Bearer "+key)
 			request.Header.Set("Content-Type", "application/json")
 			response, err := http.DefaultClient.Do(request)

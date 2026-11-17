@@ -82,7 +82,7 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(api('auth/me', token)['name'], 'Updated Admin')
         post('/settings/account?/member', {'name': 'Member', 'email': 'member@example.test', 'password': 'member-test-password'})
         member = api('auth/login', method='POST', body={'email': 'member@example.test', 'password': 'member-test-password'})['token']
-        api('models', member, method='POST', body={'name': 'Blocked', 'publisher': 'test', 'task': 'llm'}, status=403)
+        api('models', member, method='POST', body={'name': 'Blocked', 'publisher': 'test', 'task': 'stt'}, status=403)
         post('/settings/account?/profile', {'name': 'CSRF'}, status=403, request_origin='https://untrusted.example')
         self.assertEqual(api('auth/me', token)['name'], 'Updated Admin')
         for path in ['/', '/models', '/api-keys', '/activity', '/logs', '/quickstart', '/settings/account',

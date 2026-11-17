@@ -1,4 +1,5 @@
 /data/
+/.secrets/
 __pycache__/
 /docker/providers.compose.yml
 /examples/.env

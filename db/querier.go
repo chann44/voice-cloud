@@ -33,6 +33,7 @@ type Querier interface {
 	DeleteExpiredUserSessions(ctx context.Context, expiresAt int64) (int64, error)
 	DeleteExpiredUserTokens(ctx context.Context, expiresAt int64) (int64, error)
 	DeleteModel(ctx context.Context, id int64) (int64, error)
+	DeleteProviderSecret(ctx context.Context, connectionID int64) error
 	DeleteRequest(ctx context.Context, id string) (int64, error)
 	DeleteRoutingPolicy(ctx context.Context, id int64) (int64, error)
 	DeleteUser(ctx context.Context, id int64) (int64, error)
@@ -49,6 +50,7 @@ type Querier interface {
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
 	GetDeploymentHealth(ctx context.Context, deploymentID int64) (DeploymentHealth, error)
 	GetModel(ctx context.Context, id int64) (Model, error)
+	GetProviderSecret(ctx context.Context, connectionID int64) (ProviderSecret, error)
 	GetRequest(ctx context.Context, id string) (Request, error)
 	GetRequestByIdempotencyKey(ctx context.Context, arg GetRequestByIdempotencyKeyParams) (Request, error)
 	GetRoutingPolicy(ctx context.Context, id int64) (RoutingPolicy, error)
@@ -65,6 +67,7 @@ type Querier interface {
 	ListModels(ctx context.Context) ([]Model, error)
 	ListPolicyDeployments(ctx context.Context, policyID int64) ([]Deployment, error)
 	ListPolicyTargets(ctx context.Context, policyID int64) ([]PolicyTarget, error)
+	ListProviderSecrets(ctx context.Context) ([]ProviderSecret, error)
 	ListRecentDeploymentAttempts(ctx context.Context, arg ListRecentDeploymentAttemptsParams) ([]Attempt, error)
 	ListRequestAttempts(ctx context.Context, requestID string) ([]Attempt, error)
 	ListRequestUsage(ctx context.Context, requestID string) ([]AttemptUsage, error)
@@ -80,6 +83,7 @@ type Querier interface {
 	SetAttemptProviderRequestID(ctx context.Context, arg SetAttemptProviderRequestIDParams) (int64, error)
 	SetDeploymentHealth(ctx context.Context, arg SetDeploymentHealthParams) (int64, error)
 	SetPolicyTarget(ctx context.Context, arg SetPolicyTargetParams) error
+	SetProviderSecret(ctx context.Context, arg SetProviderSecretParams) error
 	SetRequestRoutingSnapshot(ctx context.Context, arg SetRequestRoutingSnapshotParams) (int64, error)
 	SetUserStatus(ctx context.Context, arg SetUserStatusParams) (int64, error)
 	StartRequest(ctx context.Context, id string) (int64, error)

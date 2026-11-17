@@ -19,9 +19,9 @@ class SeedTest(unittest.TestCase):
         self.make('db-up')
         adapters = [provider[1] for provider in seed.PROVIDERS]
         self.assertEqual(len(adapters), len(set(adapters)))
-        self.assertTrue({'openai', 'deepgram', 'anthropic', 'speechmatics', 'gemini',
+        self.assertTrue({'openai', 'deepgram', 'speechmatics', 'google',
                          'gladia', 'hume', 'maya', 'custom', 'local'} <= set(adapters))
-        self.assertEqual(len([provider for provider in seed.PROVIDERS if provider[1] not in ('custom', 'local')]), 36)
+        self.assertEqual(len([provider for provider in seed.PROVIDERS if provider[1] not in ('custom', 'local')]), 32)
         for name, adapter, location, base_url, credential_ref in seed.PROVIDERS:
             with self.subTest(provider=name):
                 url = urlsplit(base_url)

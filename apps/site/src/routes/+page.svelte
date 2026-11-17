@@ -55,7 +55,7 @@
 		{ model: 'whisper-large-v3', via: 'Local runtime', task: 'STT', langs: 'en · ja', health: 'healthy' },
 		{ model: 'sonic-2', via: 'Cartesia', task: 'TTS', langs: 'en', health: 'unknown' },
 		{ model: 'eleven_flash_v2_5', via: 'ElevenLabs', task: 'TTS', langs: 'en · de · fr', health: 'healthy' },
-		{ model: 'gpt-4o-mini', via: 'OpenAI', task: 'LLM', langs: '—', health: 'unknown' }
+		{ model: 'Native voice conversion', via: 'Local', task: 'S2S', langs: 'configured', health: 'unknown' }
 	];
 	const activity = [
 		{ time: '14:02', text: 'Connection Deepgram enabled' },
@@ -66,7 +66,7 @@
 		{ time: '14:06', text: 'Health check nova-3 · healthy' }
 	];
 	const providers =
-		'Alibaba, Anthropic, AssemblyAI, Azure, Baseten, Cartesia, Cerebras, Deepgram, DeepInfra, ElevenLabs, Fish Audio, Gemini, Gladia, Google, Gradium, Hamsa, Hopper, Hume, Inworld, Maya Research, Meta, MiniMax, Modulate, Munsit, Nari Labs, Omi Health, OpenAI, Palabra, Paxa Labs, Rime, Smallest AI, Soniox, Speechify, Speechmatics, Together, xAI'.split(
+		'Alibaba, AssemblyAI, Azure, Cartesia, Deepgram, DeepInfra, ElevenLabs, Fish Audio, Gladia, Google, Gradium, Hamsa, Hopper, Hume, Inworld, Maya Research, Meta, MiniMax, Modulate, Munsit, Nari Labs, Omi Health, OpenAI, Palabra, Paxa Labs, Rime, Smallest AI, Soniox, Speechify, Speechmatics, Together, xAI'.split(
 			', '
 		);
 </script>

@@ -11,23 +11,19 @@ ROOT = Path(__file__).resolve().parent.parent
 # Public catalog + Gateway adapters, reviewed 2026-11-11:
 # https://speko.ai/models
 # https://github.com/SpekoAI/gateway/blob/main/gateway/catalog.go
-# These are disabled configuration records; provider adapters are not implemented yet.
+# These are disabled configuration records; only compatible HTTP adapters can route.
 # Base URLs are origins, not modality-specific HTTP or WebSocket paths.
 PROVIDERS = (
     ('Alibaba', 'alibaba', 'cloud', 'https://dashscope-intl.aliyuncs.com', 'DASHSCOPE_API_KEY'),
-    ('Anthropic', 'anthropic', 'cloud', 'https://api.anthropic.com', 'ANTHROPIC_API_KEY'),
     ('AssemblyAI', 'assemblyai', 'cloud', 'https://streaming.assemblyai.com', 'ASSEMBLYAI_API_KEY'),
     ('Azure', 'azure', 'cloud', 'https://your-resource.openai.azure.com', 'AZURE_OPENAI_API_KEY'),
-    ('Baseten', 'baseten', 'cloud', 'https://inference.baseten.co', 'BASETEN_API_KEY'),
     ('Cartesia', 'cartesia', 'cloud', 'https://api.cartesia.ai', 'CARTESIA_API_KEY'),
-    ('Cerebras', 'cerebras', 'cloud', 'https://api.cerebras.ai', 'CEREBRAS_API_KEY'),
     ('Deepgram', 'deepgram', 'cloud', 'https://api.deepgram.com', 'DEEPGRAM_API_KEY'),
     ('DeepInfra', 'deepinfra', 'cloud', 'https://api.deepinfra.com', 'DEEPINFRA_API_KEY'),
     ('ElevenLabs', 'elevenlabs', 'cloud', 'https://api.elevenlabs.io', 'ELEVENLABS_API_KEY'),
     ('Fish Audio', 'fish', 'cloud', 'https://api.fish.audio', 'FISH_API_KEY'),
-    ('Gemini', 'gemini', 'cloud', 'https://generativelanguage.googleapis.com', 'GOOGLE_API_KEY'),
     ('Gladia', 'gladia', 'cloud', 'https://api.gladia.io', 'GLADIA_API_KEY'),
-    ('Google', 'google', 'cloud', 'https://generativelanguage.googleapis.com', 'GOOGLE_API_KEY'),
+    ('Google', 'google', 'cloud', 'https://speech.googleapis.com', 'GOOGLE_API_KEY'),
     ('Gradium', 'gradium', 'cloud', 'https://api.gradium.ai', 'GRADIUM_API_KEY'),
     ('Hamsa', 'hamsa', 'cloud', 'https://api.tryhamsa.com', 'HAMSA_API_KEY'),
     ('Hopper', 'hopper', 'cloud', 'https://api.withhopper.com', 'HOPPER_API_KEY'),

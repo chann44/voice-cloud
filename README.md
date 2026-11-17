@@ -43,18 +43,16 @@ The console is at `http://localhost:3000` and the API at `http://localhost:8080`
 Open the console to create the first administrator. Follow the [guided setup](docs/quickstart.md) to test a route in the console playground. See [the Docker guide](docs/docker.md)
 for development mode and [the API guide](docs/api.md) for running without Docker.
 
-Configure an OpenAI-compatible connection, model, deployment, and routing policy,
-then mint a router key to send chat, text-to-speech, or transcription requests.
-The [inference guide](docs/inference.md) covers endpoints, streaming, fallback,
-credentials, and usage records. Native provider protocols and WebSocket/realtime
-sessions remain future work; a seeded provider entry does not imply adapter support.
+Configure a speech provider, model, deployment and matching routing policy, then
+create a router key. Voice Cloud supports **text-to-speech, speech-to-text and
+native speech-to-speech only**. The [speech API](docs/inference.md) and
+[implemented adapters](docs/adapters.md) cover routing, fallback and provider
+limits. Native S2S consumes audio directly and returns audio; there is no text-chat
+endpoint or STT → LLM → TTS pipeline. WebSocket conversations are not implemented.
 
-LLM policies can opt into [decision-assisted routing](docs/inference.md#decision-assisted-llm-routing)
-with Jev or another TypeSafe Choice-compatible service. The model chooses among
-eligible deployments; unavailable or uncertain decisions keep the policy's normal order.
 
-See [application examples](examples/README.md) for TypeScript and Python chat,
-transcription, speech, and recorded voice-assistant flows, plus curl requests.
+See [application examples](examples/README.md) for TypeScript, Python and curl
+transcription, synthesis and native speech-to-speech requests.
 
 ## Landing page
 
