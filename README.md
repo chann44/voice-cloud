@@ -40,7 +40,7 @@ docker compose -f docker/compose.yml up --build -d
 ```
 
 The console is at `http://localhost:3000` and the API at `http://localhost:8080`.
-Open the console to create the first administrator. See [the Docker guide](docs/docker.md)
+Open the console to create the first administrator. Follow the [guided setup](docs/quickstart.md) to test a route in the console playground. See [the Docker guide](docs/docker.md)
 for development mode and [the API guide](docs/api.md) for running without Docker.
 
 Configure an OpenAI-compatible connection, model, deployment, and routing policy,
@@ -69,3 +69,18 @@ bun run build    # output in apps/site/build
 
 Its "Open app" and "Docs" links are set in `apps/site/src/lib/links.ts`, or with
 `VITE_APP_URL` and `VITE_DOCS_URL` at build time. See [its README](apps/site/README.md).
+
+## Reliability checks and operations
+
+See [operations and recovery](docs/operations.md) for automatic backups, verified
+restores, request recovery, and retention. The default Compose stack includes a
+daily backup service; copy backups off-host for protection against host loss.
+
+```sh
+make check       # API/worker race tests, database and backup checks, examples, console
+make e2e-check   # Real local API + console against mock providers; no paid calls
+```
+
+Routing quality and real vendor compatibility must also be evaluated against your
+configured deployments. Local mock-provider tests prove protocol and failure
+handling, not model quality or invoice accuracy.

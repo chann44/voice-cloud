@@ -21,6 +21,7 @@ type api struct {
 	db      *sql.DB
 	queries *db.Queries
 	logins  loginLimiter
+	gate    *inferenceGate
 }
 
 type endpoint func(http.ResponseWriter, *http.Request) error

@@ -180,6 +180,12 @@ func (a *api) deployments(w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 		}
+		if _, err := parsePricing(string(body.Pricing)); err != nil {
+			return err
+		}
+		if _, err := deploymentResponseLimits(string(body.Settings)); err != nil {
+			return err
+		}
 		if id == 0 {
 			row, err := a.queries.CreateDeployment(ctx, db.CreateDeploymentParams{Name: body.Name, ModelID: body.ModelID, ConnectionID: body.ConnectionID, UpstreamModelID: body.UpstreamModelID, Enabled: defaultEnabled(body.Enabled), CapabilitiesJson: string(body.Capabilities), PricingJson: string(body.Pricing), SettingsJson: string(body.Settings)})
 			return result(w, 201, deploymentJSON(row), err)

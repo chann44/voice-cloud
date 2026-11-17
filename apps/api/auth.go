@@ -34,7 +34,7 @@ type loginLimiter struct {
 	windows map[string]loginWindow
 }
 
-func (l *loginLimiter) allow(address string) bool {
+func (l *loginLimiter) allow(address string, limit int) bool {
 	l.Lock()
 	defer l.Unlock()
 	now := time.Now()
@@ -47,7 +47,7 @@ func (l *loginLimiter) allow(address string) bool {
 		}
 	}
 	value := l.windows[address]
-	if value.count >= 20 || len(l.windows) >= 4096 && value.count == 0 {
+	if value.count >= limit || len(l.windows) >= 4096 && value.count == 0 {
 		return false
 	}
 	if value.count == 0 {
@@ -57,9 +57,10 @@ func (l *loginLimiter) allow(address string) bool {
 	l.windows[address] = value
 	return true
 }
-func (a *api) allowLogin(r *http.Request) error {
+func (a *api) allowLogin(r *http.Request, email string) error {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if !a.logins.allow(ip) {
+	// Console users share the web server's address; isolate ordinary account limits.
+	if !a.logins.allow("ip:"+ip, 120) || !a.logins.allow("account:"+ip+":"+tokenHash(strings.ToLower(strings.TrimSpace(email))), 20) {
 		return httpError{429, "too many sign-in attempts; retry in a minute"}
 	}
 	return nil
@@ -142,7 +143,7 @@ func (a *api) authStatus(w http.ResponseWriter, r *http.Request) error {
 	return send(w, 200, map[string]bool{"needs_setup": count == 0})
 }
 func (a *api) signup(w http.ResponseWriter, r *http.Request) error {
-	if err := a.allowLogin(r); err != nil {
+	if err := a.allowLogin(r, "initial-setup"); err != nil {
 		return err
 	}
 	count, err := a.queries.CountUsers(r.Context())
@@ -186,14 +187,15 @@ func (a *api) signup(w http.ResponseWriter, r *http.Request) error {
 	return send(w, 201, session)
 }
 func (a *api) login(w http.ResponseWriter, r *http.Request) error {
-	if err := a.allowLogin(r); err != nil {
-		return err
-	}
 	var body struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	if err := decode(w, r, &body); err != nil {
+		return err
+	}
+	if err := a.allowLogin(r, body.Email); err != nil {
+		w.Header().Set("Retry-After", "60")
 		return err
 	}
 	if len(body.Email) > 254 || len(body.Password) > 1024 {

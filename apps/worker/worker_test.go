@@ -349,3 +349,70 @@ func TestScheduleRetriesAfterJobFailure(t *testing.T) {
 		t.Fatal("scheduler did not retry or shut down")
 	}
 }
+
+func TestRequestRetentionConfiguration(t *testing.T) {
+	for _, value := range []string{"", "0", "30", "3650", "-1", "3651", "forever"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("REQUEST_RETENTION_DAYS", value)
+			days, err := requestRetentionDays()
+			switch value {
+			case "":
+				if err != nil || days != 30 {
+					t.Fatalf("default: %d %v", days, err)
+				}
+			case "0", "30", "3650":
+				if err != nil || fmt.Sprint(days) != value {
+					t.Fatalf("valid: %d %v", days, err)
+				}
+			default:
+				if err == nil {
+					t.Fatal("invalid retention accepted")
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupReconcilesAbandonedRequestsAndHonorsRetention(t *testing.T) {
+	for _, days := range []int{0, 30} {
+		t.Run(fmt.Sprint(days), func(t *testing.T) {
+			w := setup(t)
+			w.retentionDays = days
+			now := time.Now().UnixMilli()
+			if _, err := w.database.Exec(`INSERT INTO api_keys(id,name,key_hash,key_prefix) VALUES(1,'app','hash','prefix')`); err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range []struct {
+				id, status string
+				started    int64
+				finished   any
+			}{
+				{"expired", "succeeded", now - (32 * 24 * time.Hour).Milliseconds(), now - (31 * 24 * time.Hour).Milliseconds()},
+				{"abandoned", "running", now - (7 * time.Minute).Milliseconds(), nil},
+				{"active", "running", now - time.Minute.Milliseconds(), nil},
+			} {
+				_, err := w.database.Exec(`INSERT INTO requests(id,api_key_id,task,transport,routing_snapshot_json,status,started_at,finished_at) VALUES(?,1,'llm','http','{}',?,?,?)`, row.id, row.status, row.started, row.finished)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := w.cleanup(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var status, code string
+			if err := w.database.QueryRow(`SELECT status,error_code FROM requests WHERE id='abandoned'`).Scan(&status, &code); err != nil || status != "failed" || code != "process_interrupted" {
+				t.Fatalf("abandoned: %s %s %v", status, code, err)
+			}
+			if err := w.database.QueryRow(`SELECT status FROM requests WHERE id='active'`).Scan(&status); err != nil || status != "running" {
+				t.Fatalf("active: %s %v", status, err)
+			}
+			var count int
+			if err := w.database.QueryRow(`SELECT count(*) FROM requests WHERE id='expired'`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if (days == 0 && count != 1) || (days > 0 && count != 0) {
+				t.Fatalf("retention %d kept %d expired requests", days, count)
+			}
+		})
+	}
+}

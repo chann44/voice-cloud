@@ -22,7 +22,7 @@ func setupInference(t *testing.T, task, providerURL string) (*testAPI, string) {
 	a := setup(t)
 	a.call("POST", "/v1/connections", fmt.Sprintf(`{"name":"Provider","adapter":"custom","location_kind":"local","base_url":%q,"credential_ref":"TEST_INFERENCE_SECRET"}`, providerURL), 201)
 	a.call("POST", "/v1/models", fmt.Sprintf(`{"name":"Model","publisher":"test","task":%q}`, task), 201)
-	a.call("POST", "/v1/deployments", `{"name":"Primary","model_id":1,"connection_id":1,"upstream_model_id":"upstream-primary","pricing_json":{"request_nanos":7}}`, 201)
+	a.call("POST", "/v1/deployments", `{"name":"Primary","model_id":1,"connection_id":1,"upstream_model_id":"upstream-primary","pricing_json":{"request_nanos":7},"capabilities_json":{"streaming":true,"voices":["alloy"],"response_formats":["json","text","verbose_json","mp3"],"max_input_bytes":32768,"max_output_tokens":4096}}`, 201)
 	a.call("POST", "/v1/policies", fmt.Sprintf(`{"name":"Route","task":%q}`, task), 201)
 	a.call("PUT", "/v1/policies/1/targets/1", `{"priority":0}`, 200)
 	created := jsonObject(t, a.call("POST", "/v1/api-keys", `{"name":"App","default_policy_id":1}`, 201))
@@ -115,8 +115,8 @@ func TestInferenceJSONAuthenticationAndActivity(t *testing.T) {
 		if row.Metric == "requests" && (!row.CostNanos.Valid || row.CostNanos.Int64 != 7 || row.CostStatus != "estimated") {
 			t.Fatalf("request rate: %#v", row)
 		}
-		if row.Metric != "requests" && (row.CostNanos.Valid || row.CostStatus != "unknown") {
-			t.Fatalf("invented token pricing: %#v", row)
+		if row.Metric != "requests" && (!row.CostNanos.Valid || row.CostNanos.Int64 != 0 || row.CostStatus != "estimated") {
+			t.Fatalf("flat price was counted twice: %#v", row)
 		}
 	}
 	if metrics["requests"] != 1 || metrics["input_tokens"] != 3 || metrics["output_tokens"] != 2 || metrics["total_tokens"] != 5 {
@@ -142,7 +142,7 @@ func TestInferenceJSONAuthenticationAndActivity(t *testing.T) {
 }
 
 func TestInferenceFallback(t *testing.T) {
-	for _, upstreamStatus := range []int{503, 400} {
+	for _, upstreamStatus := range []int{503, 401, 403, 404, 400} {
 		t.Run(fmt.Sprint(upstreamStatus), func(t *testing.T) {
 			var primary, backup atomic.Int64
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +160,7 @@ func TestInferenceFallback(t *testing.T) {
 				}
 				backup.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				io.WriteString(w, `{"choices":[]}`)
+				io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Hello"}}]}`)
 			}))
 			defer provider.Close()
 			a, token := setupInference(t, "llm", provider.URL)
@@ -185,7 +185,7 @@ func TestInferenceFallback(t *testing.T) {
 func TestInferenceMalformedPricing(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"choices":[]}`)
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Hello"}}]}`)
 	}))
 	defer provider.Close()
 	a, token := setupInference(t, "llm", provider.URL)
@@ -292,14 +292,14 @@ func TestInferenceStreams(t *testing.T) {
 			}))
 			defer provider.Close()
 			a, token := setupInference(t, "llm", provider.URL)
-			a.call("POST", "/v1/deployments", `{"name":"Backup","model_id":1,"connection_id":1,"upstream_model_id":"backup"}`, 201)
+			a.call("POST", "/v1/deployments", `{"name":"Backup","model_id":1,"connection_id":1,"upstream_model_id":"backup","capabilities_json":{"streaming":true}}`, 201)
 			a.call("PUT", "/v1/policies/1/targets/2", `{"priority":1}`, 200)
 			response := callInference(t, a, token, "/v1/chat/completions", "application/json", []byte(`{"messages":[{"role":"user","content":"Hi"}],"stream":true}`), nil, 200, mode != "complete")
 			requestID := response.Header().Get("X-Request-ID")
 			request, err := db.New(a.db).GetRequest(context.Background(), requestID)
 			wantStatus, wantCode := "succeeded", ""
 			if mode == "incomplete" {
-				wantStatus, wantCode = "failed", "stream_incomplete"
+				wantStatus, wantCode = "failed", "response_interrupted"
 			} else if mode == "interrupted" {
 				wantStatus, wantCode = "failed", "response_interrupted"
 			}

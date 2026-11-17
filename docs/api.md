@@ -60,6 +60,7 @@ name; configuration and member creation require an administrator.
 | `/v1/policies/{id}/targets/{deployment}` | PUT, DELETE | Set/remove a target; PUT accepts `{"priority":0}` |
 | `/v1/api-keys` | GET, POST | List/mint router keys |
 | `/v1/api-keys/{id}` | GET, DELETE | Read/revoke a key; revocation preserves history |
+| `/v1/analytics` | GET | Rolling 24-hour totals, hourly traffic, duration percentiles, fallback and partial costs |
 | `/v1/requests` | GET | Paginated request history |
 | `/v1/requests/{request}` | GET | Read one request |
 | `/v1/requests/{request}/attempts` | GET | List provider attempts in order |
@@ -161,3 +162,25 @@ make db-check
 
 API tests use the real Go SQLite driver and Goose migrations on temporary files,
 without opening network listeners or contacting model providers.
+
+## Console route tests and analytics
+
+Follow [First working route](quickstart.md) to configure and verify an installation.
+The console's **Test a route** page submits a short chat request with a transient
+router key. It uses the same inference endpoint as an application, requests at most
+128 output tokens, and waits one minute. It does not create a special unmetered
+route or save the supplied key.
+
+`GET /v1/analytics` requires management authentication and reports all requests
+started in the rolling 24-hour window. The response includes request status counts,
+provider attempt count, requests with fallback attempts, average and exact
+nearest-rank median/P95 duration for completed requests, and 24 rolling one-hour
+traffic buckets. Duration includes routing and all attempts; it is not a
+provider-only latency measurement. Requests still running have no duration.
+
+`known_cost_nanos` sums stored known or estimated provider and decision costs;
+`decision_cost_nanos` is the decision share. `unknown_cost_attempts` counts
+provider attempts with no known cost or an unknown non-total usage metric;
+`unknown_decisions` counts attempted decisions with no recorded cost.
+`decision_cost_included` is true. These partial estimates are not invoices and do
+not imply that missing usage or unknown costs are free.

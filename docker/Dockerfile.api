@@ -22,12 +22,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine:3.22 AS production
 RUN apk add --no-cache bash ca-certificates python3 && \
     addgroup -g 10001 app && adduser -D -u 10001 -G app app && \
-    mkdir /data && chown app:app /data
+    mkdir /data /backups && chown app:app /data /backups
 WORKDIR /app
 COPY --from=build /out/api /out/worker /usr/local/bin/
 COPY --from=build /go/bin/goose /usr/local/bin/goose
 COPY db/migrations ./db/migrations
 COPY scripts/seed.py ./scripts/seed.py
+COPY scripts/database.py ./scripts/database.py
 COPY docker/backend-entrypoint.sh ./docker/backend-entrypoint.sh
 ENV DB_PATH=/data/voice-cloud.db API_ADDR=0.0.0.0:8080
 USER app

@@ -10,6 +10,11 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       DB_PATH: /data/voice-cloud.db
       API_ADDR: 0.0.0.0:8080
+      REQUEST_RETENTION_DAYS: ${REQUEST_RETENTION_DAYS:-30}
+      INFERENCE_MAX_CONCURRENCY: ${INFERENCE_MAX_CONCURRENCY:-2}
+      INFERENCE_PER_KEY_CONCURRENCY: ${INFERENCE_PER_KEY_CONCURRENCY:-2}
+      INFERENCE_REQUESTS_PER_MINUTE: ${INFERENCE_REQUESTS_PER_MINUTE:-60}
+      INFERENCE_DAILY_REQUEST_LIMIT: ${INFERENCE_DAILY_REQUEST_LIMIT:-10000}
     volumes:
       - database:/data
     ports:
@@ -20,6 +25,32 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  backup:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    init: true
+    entrypoint: ["python3", "/app/scripts/database.py"]
+    command: ["schedule", "--db", "/data/voice-cloud.db", "--directory", "/backups", "--keep", "7"]
+    volumes:
+      # SQLite readers may create WAL coordination files; the source connection uses mode=ro.
+      - database:/data
+      - backups:/backups
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import glob,os,sys,time; sys.exit(0 if any(os.path.isfile(p) and not os.path.islink(p) and time.time()-os.stat(p).st_mtime < 93600 for p in glob.glob('/backups/voice-cloud-*.db')) else 1)"]
+      interval: 60s
+      timeout: 5s
+      start_period: 5m
+      retries: 2
     restart: unless-stopped
     stop_grace_period: 15s
 
@@ -48,3 +79,4 @@ services:
 
 volumes:
   database:
+  backups:

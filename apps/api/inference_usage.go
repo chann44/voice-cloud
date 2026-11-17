@@ -96,10 +96,20 @@ func (o *usageObserver) inspect(value []byte) {
 	if o.metrics == nil {
 		o.metrics = map[string]int64{}
 	}
-	for source, target := range map[string]string{"prompt_tokens": "input_tokens", "input_tokens": "input_tokens", "completion_tokens": "output_tokens", "output_tokens": "output_tokens", "total_tokens": "total_tokens"} {
-		var quantity int64
-		if raw, ok := envelope.Usage[source]; ok && string(raw) != "null" && json.Unmarshal(raw, &quantity) == nil && quantity >= 0 {
-			o.metrics[target] = quantity
+	for _, metric := range []struct {
+		target  string
+		sources []string
+	}{
+		{"input_tokens", []string{"input_tokens", "prompt_tokens"}},
+		{"output_tokens", []string{"output_tokens", "completion_tokens"}},
+		{"total_tokens", []string{"total_tokens"}},
+	} {
+		for _, source := range metric.sources {
+			var quantity int64
+			if raw, ok := envelope.Usage[source]; ok && string(raw) != "null" && json.Unmarshal(raw, &quantity) == nil && quantity >= 0 {
+				o.metrics[metric.target] = quantity
+				break
+			}
 		}
 	}
 	seconds := envelope.Duration
@@ -149,10 +159,20 @@ func (a *api) finishInferenceAttempt(id, status, code, providerID string, first 
 			}
 		}
 	}
-	var pricing struct {
-		RequestNanos *int64 `json:"request_nanos"`
+	pricing, pricingErr := parsePricing(deployment.PricingJson)
+	completeUsage := true
+	expected := []string{"input_tokens", "output_tokens"}
+	if input.task == "tts" {
+		expected = []string{"input_characters"}
+	} else if input.task == "stt" {
+		expected = []string{"audio_ms"}
 	}
-	validPricing := json.Unmarshal([]byte(deployment.PricingJson), &pricing) == nil
+	for _, metric := range expected {
+		quantity, ok := usage[metric]
+		if !ok || metricCost(pricing, metric, quantity) == nil {
+			completeUsage = false
+		}
+	}
 	for metric, quantity := range usage {
 		unit := "tokens"
 		switch {
@@ -164,8 +184,20 @@ func (a *api) finishInferenceAttempt(id, status, code, providerID string, first 
 			unit = "characters"
 		}
 		row := db.CreateAttemptUsageParams{AttemptID: id, Metric: metric, Quantity: quantity, Unit: unit, RateSnapshotJson: deployment.PricingJson, Currency: "USD", CostStatus: "unknown"}
-		if metric == "requests" && status == "succeeded" && validPricing && pricing.RequestNanos != nil && *pricing.RequestNanos >= 0 {
-			row.CostNanos = sql.NullInt64{Int64: *pricing.RequestNanos, Valid: true}
+		cost := metricCost(pricing, metric, quantity)
+		if pricingErr == nil && status == "succeeded" && pricing.Request != nil {
+			// A flat request price covers the entire attempt; other metrics are informational.
+			value := int64(0)
+			if metric == "requests" {
+				value = *pricing.Request
+			}
+			cost = &value
+		} else if metric == "total_tokens" || metric == "requests" && pricing.Request == nil && completeUsage {
+			value := int64(0)
+			cost = &value
+		}
+		if pricingErr == nil && cost != nil && (status == "succeeded" || metric != "requests") {
+			row.CostNanos = sql.NullInt64{Int64: *cost, Valid: true}
 			row.CostStatus = "estimated"
 		}
 		if _, err = q.CreateAttemptUsage(ctx, row); err != nil {

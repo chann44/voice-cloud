@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime"
@@ -20,7 +22,8 @@ type inferenceInput struct {
 	stream                bool
 	fields                map[string]json.RawMessage
 	form                  *multipart.Form
-	raw                   []byte
+	fingerprint           string
+	size                  int64
 }
 
 func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, error) {
@@ -31,24 +34,26 @@ func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, err
 	case "/v1/audio/transcriptions":
 		in.task = "stt"
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, inferenceBodyLimit))
-	if err != nil {
-		return nil, decodeError(err)
-	}
-	in.raw = raw
-	media, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		return nil, httpError{415, "invalid Content-Type"}
 	}
 	if in.task == "stt" {
-		if media != "multipart/form-data" || params["boundary"] == "" {
+		if media != "multipart/form-data" {
 			return nil, httpError{415, "transcriptions require multipart/form-data"}
 		}
-		in.form, err = multipart.NewReader(bytes.NewReader(raw), params["boundary"]).ReadForm(inferenceBodyLimit)
-		if err != nil {
-			return nil, invalid("invalid multipart body")
+		r.Body = http.MaxBytesReader(w, r.Body, inferenceBodyLimit)
+		digest := sha256.New()
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.TeeReader(r.Body, digest), r.Body}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			return nil, decodeError(err)
 		}
-		// The complete request fits in memory; always clean up in case parsing spills a file.
+		in.form = r.MultipartForm
+		in.fingerprint = hex.EncodeToString(digest.Sum(nil))
+		// Large uploads spill to temporary files and are removed after dispatch.
 		if len(in.form.File) != 1 || len(in.form.File["file"]) != 1 || in.form.File["file"][0].Size == 0 {
 			in.form.RemoveAll()
 			return nil, invalid("one nonempty audio file is required")
@@ -59,6 +64,7 @@ func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, err
 				return nil, invalid("duplicate routing field")
 			}
 		}
+		in.size = in.form.File["file"][0].Size
 		in.model = firstForm(in.form, "model")
 		in.language = firstForm(in.form, "language")
 		stream := firstForm(in.form, "stream")
@@ -71,6 +77,12 @@ func readInference(w http.ResponseWriter, r *http.Request) (*inferenceInput, err
 		if media != "application/json" {
 			return nil, httpError{415, "Content-Type must be application/json"}
 		}
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, inferenceBodyLimit))
+		if err != nil {
+			return nil, decodeError(err)
+		}
+		in.size = int64(len(raw))
+		in.fingerprint = tokenHash(string(raw))
 		if err := json.Unmarshal(raw, &in.fields); err != nil || in.fields == nil {
 			return nil, invalid("body must be a JSON object")
 		}
@@ -118,7 +130,7 @@ func firstForm(form *multipart.Form, name string) string {
 	return form.Value[name][0]
 }
 
-func (in *inferenceInput) upstreamBody(d db.Deployment) ([]byte, string, error) {
+func (in *inferenceInput) upstreamBody(d db.Deployment) (io.Reader, string, error) {
 	if in.form != nil {
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
@@ -154,7 +166,7 @@ func (in *inferenceInput) upstreamBody(d db.Deployment) ([]byte, string, error) 
 		if err = writer.Close(); err != nil {
 			return nil, "", err
 		}
-		return body.Bytes(), writer.FormDataContentType(), nil
+		return bytes.NewReader(body.Bytes()), writer.FormDataContentType(), nil
 	}
 	fields := make(map[string]json.RawMessage, len(in.fields)+1)
 	for key, value := range in.fields {
@@ -166,5 +178,5 @@ func (in *inferenceInput) upstreamBody(d db.Deployment) ([]byte, string, error) 
 		delete(fields, "language")
 	}
 	body, err := json.Marshal(fields)
-	return body, "application/json", err
+	return bytes.NewReader(body), "application/json", err
 }

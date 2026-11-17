@@ -10,7 +10,8 @@ import (
 )
 
 func newHandler(database *sql.DB, adminToken string) http.Handler {
-	a := &api{db: database, queries: db.New(database)}
+	gate, _ := configuredGate()
+	a := &api{db: database, queries: db.New(database), gate: gate}
 	admin := http.NewServeMux()
 	for path, fn := range map[string]endpoint{
 		"connections": a.connections, "models": a.models,
@@ -34,6 +35,7 @@ func newHandler(database *sql.DB, adminToken string) http.Handler {
 	admin.HandleFunc("POST /v1/api-keys", handle(a.keys))
 	admin.HandleFunc("GET /v1/api-keys/{id}", handle(a.keys))
 	admin.HandleFunc("DELETE /v1/api-keys/{id}", handle(a.keys))
+	admin.HandleFunc("GET /v1/analytics", handle(a.analytics))
 	admin.HandleFunc("GET /v1/requests", handle(a.requests))
 	admin.HandleFunc("GET /v1/requests/{request}", handle(a.requests))
 	admin.HandleFunc("GET /v1/requests/{request}/attempts", handle(a.requestAttempts))

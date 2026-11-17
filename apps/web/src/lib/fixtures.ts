@@ -12,6 +12,7 @@ export const navigation = [
 				icon: 'code',
 				shortcut: '02',
 			},
+			{ title: 'Test a route', href: '/playground', icon: 'code', shortcut: '' },
 			{ title: 'Models', href: '/models', icon: 'models', shortcut: '03' },
 			{ title: 'API keys', href: '/api-keys', icon: 'key', shortcut: '04' },
 			{ title: 'Providers', href: '/manage/connections', icon: 'models', shortcut: '' },

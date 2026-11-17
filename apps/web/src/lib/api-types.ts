@@ -105,3 +105,12 @@ export type Configuration = {
 };
 export type Target = { deployment_id: number; policy_id: number; priority: number };
 export type Language = { deployment_id: number; language_tag: string };
+
+export type Analytics = {
+ since: number; until: number; requests: number;
+ succeeded: number; failed: number; cancelled: number; in_progress: number;
+ attempts: number; fallback_requests: number;
+ avg_duration_ms: number | null; p50_duration_ms: number | null; p95_duration_ms: number | null;
+ known_cost_nanos: number; unknown_cost_attempts: number; decision_cost_nanos: number; unknown_decisions: number; decision_cost_included: boolean;
+ hourly: { started_at: number; requests: number }[];
+};

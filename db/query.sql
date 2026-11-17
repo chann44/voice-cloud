@@ -300,3 +300,8 @@ WHERE excluded.checked_at >= deployment_health.checked_at;
 
 -- name: SetRequestRoutingSnapshot :execrows
 UPDATE requests SET routing_snapshot_json = ? WHERE id = ? AND status = 'running';
+
+-- name: ListRecentDeploymentAttempts :many
+SELECT * FROM attempts
+WHERE deployment_id = ? AND started_at >= ? AND status IN ('succeeded', 'failed')
+ORDER BY started_at DESC, id DESC LIMIT 20;

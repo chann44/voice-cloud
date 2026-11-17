@@ -14,7 +14,7 @@ export const configFields: Record<string, ConfigField[]> = {
 		{
 			key: 'adapter',
 			label: 'Adapter',
-			help: 'Provider adapter name, or custom for your own HTTP endpoint.',
+			help: 'Supported HTTP protocol: openai, openai-compatible, local, custom, or whisper. Every one requires an OpenAI-compatible server; other catalog adapter names cannot serve inference yet.',
 		},
 		{ key: 'location_kind', label: 'Location', kind: 'select', options: ['cloud', 'local'] },
 		{ key: 'base_url', label: 'Base URL' },

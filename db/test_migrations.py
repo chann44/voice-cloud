@@ -45,6 +45,14 @@ class MigrationTest(unittest.TestCase):
         self.make('db-down')
         with sqlite3.connect(self.path) as db:
             self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 14)
+            self.assertIn('decision_json', [row[1] for row in db.execute(
+                'PRAGMA table_info(routing_policies)'
+            )])
+            self.assertFalse(any(row[1] in ('requests_active_started', 'requests_terminal_finished')
+                                 for row in schema(db)))
+        self.make('db-down')
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(len([row for row in schema(db) if row[0] == 'table']), 14)
             self.assertNotIn('decision_json', [row[1] for row in db.execute(
                 'PRAGMA table_info(routing_policies)'
             )])

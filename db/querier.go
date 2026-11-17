@@ -65,6 +65,7 @@ type Querier interface {
 	ListModels(ctx context.Context) ([]Model, error)
 	ListPolicyDeployments(ctx context.Context, policyID int64) ([]Deployment, error)
 	ListPolicyTargets(ctx context.Context, policyID int64) ([]PolicyTarget, error)
+	ListRecentDeploymentAttempts(ctx context.Context, arg ListRecentDeploymentAttemptsParams) ([]Attempt, error)
 	ListRequestAttempts(ctx context.Context, requestID string) ([]Attempt, error)
 	ListRequestUsage(ctx context.Context, requestID string) ([]AttemptUsage, error)
 	ListRequests(ctx context.Context, arg ListRequestsParams) ([]Request, error)

@@ -44,3 +44,11 @@ func TestUsageObserver(t *testing.T) {
 		t.Fatal("in-band error not observed")
 	}
 }
+
+func TestCanonicalUsageWinsOverAliases(t *testing.T) {
+	observer := &usageObserver{}
+	observer.inspect([]byte(`{"usage":{"input_tokens":4,"prompt_tokens":3,"output_tokens":6,"completion_tokens":5}}`))
+	if observer.metrics["input_tokens"] != 4 || observer.metrics["output_tokens"] != 6 {
+		t.Fatalf("usage aliases changed canonical counts: %+v", observer.metrics)
+	}
+}

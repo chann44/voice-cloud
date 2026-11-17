@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { PageProps } from './$types';
+	let { data }: PageProps = $props();
 	import InfoTip from '#lib/components/InfoTip.svelte';
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import CodeBlock from '#lib/components/CodeBlock.svelte';
@@ -25,6 +27,18 @@
 	>{#snippet actions()}<Button href="/api-keys" size="sm">Create API key +</Button
 		>{/snippet}</PageHeader
 >
+<section class="panel panel-body mb-4" aria-labelledby="setup-checklist">
+ <h2 id="setup-checklist" class="mb-3">Your installation</h2>
+ <ol class="flex flex-col gap-3">
+  <li><a class="table-link" href="/manage/connections">1. Connect a provider →</a><p class="muted text-xs">{data.connections.filter((connection) => connection.enabled).length} enabled connections. Use an OpenAI-compatible endpoint and set its provider-key environment variable in the API process.</p></li>
+  <li><a class="table-link" href="/models">2. Register a model →</a><p class="muted text-xs">{data.models.length} models. Choose STT, TTS, or LLM to match the provider endpoint.</p></li>
+  <li><a class="table-link" href="/manage/deployments">3. Add a deployment →</a><p class="muted text-xs">{data.deployments.filter((deployment) => deployment.enabled).length} enabled deployments. Set the upstream model ID and declare the capabilities your app requires.</p></li>
+  <li><a class="table-link" href="/manage/policies">4. Configure a policy and targets →</a><p class="muted text-xs">{data.policies.length} policies. Add compatible deployments, set their priority, and enable fallback if needed.</p></li>
+  <li><a class="table-link" href="/api-keys">5. Create a router key →</a><p class="muted text-xs">Keep the key on your app's backend. Management session tokens cannot run model requests.</p></li>
+  <li><a class="table-link" href="/playground">6. Send a real test request →</a><p class="muted text-xs">Verify chat in the console, or use the speech commands below. Inspect the resulting request and attempts in Activity.</p></li>
+ </ol>
+ <p class="muted text-xs mt-4">Counts show saved configuration, not proof of a working route. Provider credentials, model access, voices, and formats are verified only by a real request. Seeded native-provider entries remain disabled until a supported adapter is configured.</p>
+</section>
 <div class="two-column">
 	<section>
 		<h2 class="mb-4">Setup</h2>

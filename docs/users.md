@@ -13,8 +13,10 @@ session creation use one transaction; a guarded INSERT allows just one first use
 Random 256-bit session tokens are stored as SHA-256 hashes in `user_sessions`.
 Tokens expire after seven days, survive service restarts, and are revoked on logout.
 Disabled users and expired/revoked sessions cannot authenticate. Authentication
-attempts are limited to 20 per minute per backend remote address, including the
-web server's shared address. The rate limit is in memory and resets on restart.
+attempts are limited to 20 per minute per normalized account and backend address,
+with an additional 120-per-minute ceiling per backend address. Console users share
+the web server's address, but one account hitting its ordinary limit does not consume
+every other account's 20-attempt allowance. The rate limit is in memory and resets on restart.
 Passwords, password hashes, and raw session tokens are never returned by account
 reads. Signup/login return raw tokens only for the client to establish a session.
 

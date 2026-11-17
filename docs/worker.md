@@ -10,12 +10,13 @@ Two jobs run immediately on startup:
 
 | Job | Schedule | Behavior |
 | --- | --- | --- |
-| Auth cleanup | Every 15 minutes | Deletes expired user sessions and reset/verification tokens |
+| Maintenance | Every minute | Deletes expired authentication records, finishes abandoned requests, and prunes expired terminal history |
 | Deployment health | Every 30 seconds | Checks enabled deployments on enabled connections, with at most four simultaneous probes |
 
 Each job completes before its next run can begin. Cleanup uses one short
-transaction and logs deletion counts. It never deletes users, router keys,
-requests, usage, or other configuration. Transient job errors are logged and
+transaction and logs deletion/recovery counts. It never deletes users, router keys,
+or other configuration. Terminal request history expires after 30 days by default;
+`REQUEST_RETENTION_DAYS=0` disables history deletion. See [operations and recovery](operations.md). Transient job errors are logged and
 retried on the next scheduled run. An unavailable or unmigrated database is a
 startup error. SIGINT/SIGTERM cancels active work and waits for the jobs to stop.
 
@@ -82,7 +83,7 @@ Unknown health remains eligible unless a latency constraint requires a measureme
 see [routing policies](inference.md#policies-and-fallback).
 
 This version assumes one worker per installation. It has no Redis, job queue,
-distributed leases, async transcription, webhook delivery, or log-retention job.
+distributed leases, async transcription, or webhook delivery.
 
 ## Checks
 

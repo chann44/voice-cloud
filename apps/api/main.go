@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,9 @@ import (
 )
 
 func run(ctx context.Context) error {
+	if _, err := configuredGate(); err != nil {
+		return err
+	}
 	token := os.Getenv("ADMIN_TOKEN")
 	if token != "" && len(strings.TrimSpace(token)) < 32 {
 		return errors.New("ADMIN_TOKEN must contain at least 32 characters")
@@ -32,7 +36,9 @@ func run(ctx context.Context) error {
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
-	server := &http.Server{Addr: address, Handler: newHandler(database, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 60 * time.Second}
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
+	server := &http.Server{BaseContext: func(net.Listener) context.Context { return requestCtx }, Addr: address, Handler: newHandler(database, token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 60 * time.Second}
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.ListenAndServe() }()
 	slog.Info("API listening", "address", address)
@@ -40,6 +46,7 @@ func run(ctx context.Context) error {
 	case err := <-stopped:
 		return err
 	case <-ctx.Done():
+		cancelRequests()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {

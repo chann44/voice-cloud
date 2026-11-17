@@ -1454,6 +1454,52 @@ func (q *Queries) ListPolicyTargets(ctx context.Context, policyID int64) ([]Poli
 	return items, nil
 }
 
+const listRecentDeploymentAttempts = `-- name: ListRecentDeploymentAttempts :many
+SELECT id, request_id, deployment_id, attempt_number, provider_request_id, status, started_at, first_output_at, finished_at, error_code, selection_reason FROM attempts
+WHERE deployment_id = ? AND started_at >= ? AND status IN ('succeeded', 'failed')
+ORDER BY started_at DESC, id DESC LIMIT 20
+`
+
+type ListRecentDeploymentAttemptsParams struct {
+	DeploymentID int64 `json:"deployment_id"`
+	StartedAt    int64 `json:"started_at"`
+}
+
+func (q *Queries) ListRecentDeploymentAttempts(ctx context.Context, arg ListRecentDeploymentAttemptsParams) ([]Attempt, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentDeploymentAttempts, arg.DeploymentID, arg.StartedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Attempt
+	for rows.Next() {
+		var i Attempt
+		if err := rows.Scan(
+			&i.ID,
+			&i.RequestID,
+			&i.DeploymentID,
+			&i.AttemptNumber,
+			&i.ProviderRequestID,
+			&i.Status,
+			&i.StartedAt,
+			&i.FirstOutputAt,
+			&i.FinishedAt,
+			&i.ErrorCode,
+			&i.SelectionReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRequestAttempts = `-- name: ListRequestAttempts :many
 SELECT id, request_id, deployment_id, attempt_number, provider_request_id, status, started_at, first_output_at, finished_at, error_code, selection_reason FROM attempts WHERE request_id = ? ORDER BY attempt_number
 `

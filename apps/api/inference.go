@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -9,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -23,7 +21,7 @@ import (
 var inferenceClient = &http.Client{
 	Transport: func() *http.Transport {
 		t := http.DefaultTransport.(*http.Transport).Clone()
-		t.ResponseHeaderTimeout = 30 * time.Second
+		t.ResponseHeaderTimeout = 0 // Each attempt has its own first-output deadline.
 		return t
 	}(),
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
@@ -50,6 +48,12 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	release, err := a.gate.acquire(r.Context(), a.db, key.ID)
+	if err != nil {
+		w.Header().Set("Retry-After", "60")
+		return err
+	}
+	defer release()
 	input, err := readInference(w, r)
 	if err != nil {
 		return err
@@ -59,7 +63,7 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	policy, deployments, routeErr := a.selectRoute(ctx, key, input.task, input.model, input.language)
+	policy, deployments, routeErr := a.selectRoute(ctx, key, input.task, input.model, input.language, input)
 	// Record valid routes even when health or language constraints leave no targets.
 	var problem httpError
 	if routeErr != nil && (!errors.As(routeErr, &problem) || problem.status != 503) {
@@ -83,7 +87,7 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	fingerprint := tokenHash(r.URL.Path + "\n" + string(input.raw))
+	fingerprint := tokenHash(r.URL.Path + "\n" + input.fingerprint)
 	_, err = a.queries.CreateRequest(ctx, db.CreateRequestParams{
 		ID: id, ApiKeyID: key.ID, Task: input.task, Transport: transport,
 		LanguageTag: sql.NullString{String: input.language, Valid: input.language != ""},
@@ -122,18 +126,21 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 	decision := routeDecision{Status: "disabled"}
 	if policy.ID != 0 && policy.DecisionJson != "{}" {
 		deployments, decision = a.decideRoute(ctx, policy, input, deployments)
-		if ctx.Err() != nil {
-			code = "timeout"
-			return httpError{504, "inference cancelled or timed out"}
-		}
 		snapshotValue["decision"] = decision
 		snapshotValue["deployment_ids"] = deploymentIDs(deployments)
 		snapshot, err = json.Marshal(snapshotValue)
 		if err != nil {
 			return err
 		}
-		if _, err = a.queries.SetRequestRoutingSnapshot(ctx, db.SetRequestRoutingSnapshotParams{ID: id, RoutingSnapshotJson: string(snapshot)}); err != nil {
+		saveCtx, stopSave := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err = a.queries.SetRequestRoutingSnapshot(saveCtx, db.SetRequestRoutingSnapshotParams{ID: id, RoutingSnapshotJson: string(snapshot)})
+		stopSave()
+		if err != nil {
 			return err
+		}
+		if ctx.Err() != nil {
+			code = "timeout"
+			return httpError{504, "inference cancelled or timed out"}
 		}
 	}
 	attempts := policy.MaxAttempts
@@ -144,6 +151,10 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 		attempts = int64(len(deployments))
 	}
 	for index, deployment := range deployments[:int(attempts)] {
+		limits, limitErr := deploymentResponseLimits(deployment.SettingsJson)
+		if limitErr != nil {
+			return limitErr
+		}
 		attemptID, err := newInferenceID()
 		if err != nil {
 			return err
@@ -159,40 +170,44 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		response, attemptCode, dispatchErr := a.dispatchInference(ctx, input, deployment)
-		retry := true
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		timer := time.AfterFunc(time.Duration(limits.FirstOutputMs)*time.Millisecond, cancelAttempt)
+		response, attemptCode, dispatchErr := a.dispatchInference(attemptCtx, input, deployment)
+		retry, committed := true, false
 		var observer *usageObserver
 		firstOutput := int64(0)
 		providerID := ""
-		committed := false
 		if response != nil {
 			providerID = response.Header.Get("X-Request-ID")
 			if len(providerID) > 256 {
 				providerID = ""
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
-				committed = true
-				observer = &usageObserver{sse: strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream")}
-				firstOutput, dispatchErr = copyInference(w, response, observer)
-				retry = false
+				observer = &usageObserver{}
+				body := &deadlineBody{ReadCloser: response.Body, timer: timer, idle: time.Duration(limits.IdleMs) * time.Millisecond, idleEnabled: !input.stream}
+				committed, dispatchErr = relayInference(w, response, input, observer, body)
+				firstOutput = body.first
+				retry = !committed
 				attemptCode = ""
 				if dispatchErr != nil {
-					attemptCode = "response_interrupted"
-				}
-				if dispatchErr == nil && (firstOutput == 0 || observer.failed) {
 					attemptCode = "invalid_upstream_response"
-					dispatchErr = errors.New("empty or error response")
-				}
-				if dispatchErr == nil && input.task == "llm" && input.stream && (!observer.sse || !observer.done) {
-					attemptCode = "stream_incomplete"
-					dispatchErr = errors.New("incomplete stream")
+					if committed {
+						attemptCode = "response_interrupted"
+					}
+					if attemptCtx.Err() != nil && ctx.Err() == nil {
+						attemptCode = "upstream_timeout"
+					}
 				}
 			} else {
 				attemptCode = fmt.Sprintf("upstream_status_%d", response.StatusCode)
-				retry = response.StatusCode == 408 || response.StatusCode == 429 || response.StatusCode >= 500
+				retry = response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 408 || response.StatusCode == 429 || response.StatusCode >= 500
 			}
 			response.Body.Close()
+		} else if attemptCtx.Err() != nil && ctx.Err() == nil {
+			attemptCode = "upstream_timeout"
 		}
+		timer.Stop()
+		cancelAttempt()
 		attemptStatus := "failed"
 		if committed && dispatchErr == nil {
 			attemptStatus = "succeeded"
@@ -206,6 +221,9 @@ func (a *api) inference(w http.ResponseWriter, r *http.Request) error {
 			code = "activity_recording_failed"
 			if committed {
 				slog.Error("finish inference attempt", "request_id", id, "error", err)
+				if dispatchErr != nil {
+					panic(http.ErrAbortHandler)
+				}
 				return nil
 			}
 			return err
@@ -275,7 +293,7 @@ func (a *api) dispatchInference(ctx context.Context, input *inferenceInput, depl
 	if err != nil {
 		return nil, "invalid_deployment_settings", err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
 		return nil, "invalid_base_url", err
 	}
@@ -292,43 +310,4 @@ func (a *api) dispatchInference(ctx context.Context, input *inferenceInput, depl
 		return nil, "upstream_network_error", err
 	}
 	return response, "", nil
-}
-
-func copyInference(w http.ResponseWriter, response *http.Response, observer *usageObserver) (int64, error) {
-	contentType := response.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if response.ContentLength >= 0 {
-		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
-	}
-	w.WriteHeader(response.StatusCode)
-	controller := http.NewResponseController(w)
-	buffer := make([]byte, 32<<10)
-	first := int64(0)
-	for {
-		n, readErr := response.Body.Read(buffer)
-		if n > 0 {
-			if first == 0 {
-				first = time.Now().UnixMilli()
-			}
-			observer.Write(buffer[:n])
-			if _, err := w.Write(buffer[:n]); err != nil {
-				return first, err
-			}
-			if err := controller.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-				return first, err
-			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				observer.finish()
-				return first, nil
-			}
-			return first, readErr
-		}
-	}
 }

@@ -5,44 +5,52 @@
 	import InfoTip from '#lib/components/InfoTip.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	let { data }: PageProps = $props();
-	const buckets = $derived(
-		Array.from({ length: 24 }, (_, hour) => {
-			const start = Math.floor(Date.now() / 3600000) * 3600000 - (23 - hour) * 3600000;
-			return data.requests.filter((r) => r.started_at >= start && r.started_at < start + 3600000)
-				.length;
-		}),
-	);
+	const buckets = $derived(data.analytics.hourly.map((hour) => hour.requests));
 	const max = $derived(Math.max(1, ...buckets));
 </script>
 
 <PageHeader title="Overview" path="overview"
 	>{#snippet actions()}<Button variant="outline" size="sm" href="/quickstart">Quickstart ↗</Button
-		><Button size="sm" href="/manage/connections">Providers →</Button>{/snippet}</PageHeader
+		><Button size="sm" href="/playground">Test a route →</Button>{/snippet}</PageHeader
 >
 <div class="metric-grid">
-	{#each [{ label: 'MODELS', value: data.models.length }, { label: 'ENABLED PROVIDERS', value: data.connections.filter((c) => c.enabled).length }, { label: 'ENABLED DEPLOYMENTS', value: data.deployments.filter((d) => d.enabled).length }, { label: 'RECENT REQUESTS', value: data.requests.length }] as metric}<div
+	{#each [{ label: 'MODELS', value: data.models.length }, { label: 'ENABLED PROVIDERS', value: data.connections.filter((c) => c.enabled).length }, { label: 'ENABLED DEPLOYMENTS', value: data.deployments.filter((d) => d.enabled).length }, { label: 'REQUESTS / 24H', value: data.analytics.requests }] as metric}<div
 			class="metric"
 		>
 			<div class="metric-label flex items-center gap-1">
-				{metric.label}{#if metric.label === 'RECENT REQUESTS'}<InfoTip
-						text="Latest 100 stored requests, not an installation-wide total."
+				{metric.label}{#if metric.label === 'REQUESTS / 24H'}<InfoTip
+						text="All recorded requests started in the rolling 24-hour window."
 					/>{/if}
 			</div>
 			<div class="metric-value">{metric.value}</div>
 		</div>{/each}
+</div>
+<div class="metric-grid section">
+ {#each [
+  { label: 'FAILED / 24H', value: data.analytics.failed },
+  { label: 'FALLBACK REQUESTS / 24H', value: data.analytics.fallback_requests },
+  { label: 'MEDIAN DURATION', value: data.analytics.p50_duration_ms === null ? '—' : `${data.analytics.p50_duration_ms}ms` },
+  { label: 'P95 DURATION', value: data.analytics.p95_duration_ms === null ? '—' : `${data.analytics.p95_duration_ms}ms` },
+ ] as metric}<div class="metric"><div class="metric-label">{metric.label}</div><div class="metric-value">{metric.value}</div></div>{/each}
+</div>
+<p class="muted text-xs mt-3">Duration includes routing and all attempts for completed requests. P95 is the duration at or below which 95% of completed requests finished.</p>
+<div class="panel panel-body section">
+ <h2 class="mb-2">Recorded cost / 24h</h2>
+ <p>${(data.analytics.known_cost_nanos / 1e9).toFixed(6)} known or estimated · {data.analytics.unknown_cost_attempts} provider attempts and {data.analytics.unknown_decisions} decisions with incomplete cost.</p>
+ <p class="muted text-xs mt-2">This is a partial estimate, not an invoice. It includes configured decision-service estimates; unknown costs are not zero.</p>
 </div>
 <div class="two-column section">
 	<section class="panel">
 		<div class="panel-heading">
 			<h2>Recent traffic / 24h</h2>
 			<InfoTip
-				text="Hourly counts within the latest 100 requests. Older records may not be included."
+				text="All recorded requests in the last 24 hours, grouped into one-hour buckets."
 			/>
 		</div>
-		{#if data.requests.length}<div
+		{#if data.analytics.requests}<div
 				class="traffic-chart"
 				role="img"
-				aria-label="Hourly request counts from the latest 100 requests over 24 hours"
+				aria-label="All hourly request counts over the last 24 hours"
 			>
 				{#each buckets as count}<div class="traffic-track" title={`${count} requests`}>
 						<div style={`height:${(count / max) * 100}%`}></div>

@@ -14,7 +14,11 @@ import (
 	"voice-cloud/db"
 )
 
-func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, language string) (db.RoutingPolicy, []db.Deployment, error) {
+func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, language string, input *inferenceInput) (db.RoutingPolicy, []db.Deployment, error) {
+	requirements, err := requiredCapabilities(input)
+	if err != nil {
+		return db.RoutingPolicy{}, nil, err
+	}
 	policy := db.RoutingPolicy{Task: task, Objective: "balanced", MaxAttempts: 1, ConstraintsJson: "{}", DecisionJson: "{}"}
 	if language != "" && !languageTag.MatchString(language) {
 		return policy, nil, invalid("invalid language tag")
@@ -39,8 +43,9 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 	var candidates []db.Deployment
 	priorities := map[int64]int64{}
 	var constraints struct {
-		LocationKind string `json:"location_kind"`
-		MaxLatencyMs *int64 `json:"max_latency_ms"`
+		LocationKind                 string `json:"location_kind"`
+		MaxLatencyMs                 *int64 `json:"max_latency_ms"`
+		MaxEstimatedAttemptCostNanos *int64 `json:"max_estimated_attempt_cost_nanos"`
 	}
 	if kind == "deployment" {
 		deployment, err := queries.GetDeployment(ctx, id)
@@ -60,8 +65,9 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&constraints); err != nil ||
 			(constraints.LocationKind != "" && constraints.LocationKind != "local" && constraints.LocationKind != "cloud") ||
-			(constraints.MaxLatencyMs != nil && *constraints.MaxLatencyMs < 0) {
-			return policy, nil, invalid("unsupported routing constraints; use location_kind and max_latency_ms")
+			(constraints.MaxLatencyMs != nil && *constraints.MaxLatencyMs < 0) ||
+			(constraints.MaxEstimatedAttemptCostNanos != nil && *constraints.MaxEstimatedAttemptCostNanos < 0) {
+			return policy, nil, invalid("unsupported routing constraints; use location_kind, max_latency_ms, and max_estimated_attempt_cost_nanos")
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(policy.ConstraintsJson), &fields); err != nil {
@@ -86,6 +92,7 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 	}
 	eligible := make([]db.Deployment, 0, len(candidates))
 	metrics := map[int64]int64{}
+	exclusions := map[string]int{}
 	now := time.Now().UnixMilli()
 	for _, deployment := range candidates {
 		connection, err := queries.GetConnection(ctx, deployment.ConnectionID)
@@ -99,8 +106,27 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 		if configuredModel.Task != task {
 			return policy, nil, invalid("deployment task does not match endpoint")
 		}
-		if deployment.Enabled != 1 || connection.Enabled != 1 ||
-			(constraints.LocationKind != "" && constraints.LocationKind != connection.LocationKind) {
+		if deployment.Enabled != 1 || connection.Enabled != 1 {
+			exclusions["disabled"]++
+			continue
+		}
+		if _, err := deploymentResponseLimits(deployment.SettingsJson); err != nil {
+			exclusions["invalid_settings"]++
+			continue
+		}
+		if !supportsInferenceAdapter(connection.Adapter) {
+			exclusions["unsupported_adapter"]++
+			continue
+		}
+		if constraints.LocationKind != "" && constraints.LocationKind != connection.LocationKind {
+			exclusions["location"]++
+			continue
+		}
+		if reason := capabilityReason(input, requirements, deployment); reason != "" {
+			if kind == "deployment" {
+				return policy, nil, invalid("deployment is incompatible with this request: " + reason)
+			}
+			exclusions[reason]++
 			continue
 		}
 		if language != "" {
@@ -116,6 +142,7 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 				}
 			}
 			if !matches {
+				exclusions["language"]++
 				continue
 			}
 		}
@@ -125,23 +152,45 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 		}
 		fresh := err == nil && health.CheckedAt <= now && health.ExpiresAt > now && health.ConfigHash == db.HealthConfigHash(deployment, connection)
 		if fresh && health.Status == "unhealthy" {
+			exclusions["unhealthy"]++
 			continue
 		}
-		latency := int64(math.MaxInt64)
-		if fresh && health.Status == "healthy" && health.LatencyMs.Valid {
-			latency = health.LatencyMs.Int64
+		since := now - 10*time.Minute.Milliseconds()
+		if deployment.UpdatedAt > since {
+			since = deployment.UpdatedAt
+		}
+		if connection.UpdatedAt > since {
+			since = connection.UpdatedAt
+		}
+		recent, err := queries.ListRecentDeploymentAttempts(ctx, db.ListRecentDeploymentAttemptsParams{DeploymentID: deployment.ID, StartedAt: since})
+		if err != nil {
+			return policy, nil, err
+		}
+		latency, cooldown := inferencePerformance(recent, now)
+		if cooldown {
+			exclusions["cooldown"]++
+			continue
 		}
 		if constraints.MaxLatencyMs != nil && (latency == math.MaxInt64 || latency > *constraints.MaxLatencyMs) {
+			exclusions["latency"]++
 			continue
+		}
+		cost := estimatedRoutingCost(input, requirements, deployment)
+		if constraints.MaxEstimatedAttemptCostNanos != nil {
+			if cost == nil {
+				exclusions["pricing_unknown"]++
+				continue
+			}
+			if *cost > *constraints.MaxEstimatedAttemptCostNanos {
+				exclusions["cost_limit"]++
+				continue
+			}
 		}
 		metrics[deployment.ID] = latency
 		if policy.Objective == "cost" {
-			var pricing struct {
-				RequestNanos *int64 `json:"request_nanos"`
-			}
 			metrics[deployment.ID] = math.MaxInt64
-			if json.Unmarshal([]byte(deployment.PricingJson), &pricing) == nil && pricing.RequestNanos != nil && *pricing.RequestNanos >= 0 {
-				metrics[deployment.ID] = *pricing.RequestNanos
+			if cost != nil {
+				metrics[deployment.ID] = *cost
 			}
 		}
 		eligible = append(eligible, deployment)
@@ -156,10 +205,66 @@ func (a *api) selectRoute(ctx context.Context, key db.ApiKey, task, model, langu
 		})
 	}
 	if len(eligible) == 0 {
-		return policy, nil, httpError{503, "no eligible deployment"}
+		message := "no eligible deployment"
+		if len(exclusions) > 0 {
+			message += " (" + exclusionSummary(exclusions) + ")"
+		} else {
+			message += " (no enabled matching targets)"
+		}
+		return policy, nil, httpError{503, message}
 	}
 	if err := tx.Commit(); err != nil {
 		return policy, nil, err
 	}
 	return policy, eligible, nil
+}
+
+func inferencePerformance(recent []db.Attempt, now int64) (int64, bool) {
+	samples := make([]int64, 0, len(recent))
+	consecutiveFailures := 0
+	latestFailure := int64(0)
+	readingFailures := true
+	for _, attempt := range recent {
+		if attempt.StartedAt > now {
+			continue
+		}
+		if attempt.Status == "succeeded" {
+			readingFailures = false
+			if attempt.FirstOutputAt.Valid && attempt.FirstOutputAt.Int64 >= attempt.StartedAt {
+				samples = append(samples, attempt.FirstOutputAt.Int64-attempt.StartedAt)
+			}
+			continue
+		}
+		if !transientInferenceFailure(attempt.ErrorCode.String) {
+			continue
+		}
+		if readingFailures {
+			consecutiveFailures++
+			if attempt.FinishedAt.Valid && attempt.FinishedAt.Int64 > latestFailure {
+				latestFailure = attempt.FinishedAt.Int64
+			}
+		}
+	}
+	if consecutiveFailures >= 3 && latestFailure > now-30*time.Second.Milliseconds() {
+		return math.MaxInt64, true
+	}
+	if len(samples) == 0 {
+		return math.MaxInt64, false
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	return samples[len(samples)/2], false
+}
+
+func transientInferenceFailure(code string) bool {
+	if code == "upstream_timeout" || code == "upstream_network_error" || code == "timeout" || code == "response_interrupted" || code == "stream_incomplete" || code == "invalid_upstream_response" || code == "first_output_timeout" || code == "idle_timeout" {
+		return true
+	}
+	if code == "upstream_status_408" || code == "upstream_status_429" {
+		return true
+	}
+	if strings.HasPrefix(code, "upstream_status_") {
+		status, err := strconv.Atoi(strings.TrimPrefix(code, "upstream_status_"))
+		return err == nil && status >= 500 && status < 600
+	}
+	return false
 }

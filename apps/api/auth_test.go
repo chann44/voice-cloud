@@ -120,3 +120,13 @@ func TestPasswordHashValidation(t *testing.T) {
 		t.Fatal("invalid password accepted")
 	}
 }
+
+func TestLoginRateLimitDoesNotLockOtherAccountsBehindConsole(t *testing.T) {
+	a := setup(t)
+	a.handler = newHandler(a.db, "")
+	authCall(t, a, "", "POST", "/v1/auth/signup", `{"name":"Admin","email":"admin@example.com","password":"a-long-password"}`, 201)
+	for range 19 {
+		authCall(t, a, "", "POST", "/v1/auth/login", `{"email":"other@example.com","password":"wrong"}`, 401)
+	}
+	authCall(t, a, "", "POST", "/v1/auth/login", `{"email":"admin@example.com","password":"a-long-password"}`, 200)
+}

@@ -115,3 +115,6 @@ docker run --rm --entrypoint python3 \
 This checks migration/seeding, shutdown of both child processes, propagation of a
 child failure, and optional legacy token validation using a temporary database. Child executables
 are substituted only inside this test; production runs the Go binaries.
+
+See [operations and recovery](operations.md) for daily verified backups, retention,
+interrupted-request recovery, and restoring to a new database.

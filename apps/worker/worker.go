@@ -15,20 +15,22 @@ const (
 	probeInterval    = 30 * time.Second
 	probeTimeout     = 5 * time.Second
 	healthLifetime   = 60 * time.Second
-	cleanupInterval  = 15 * time.Minute
+	cleanupInterval  = time.Minute
 	probeConcurrency = 4
 )
 
 type worker struct {
-	database *sql.DB
-	queries  *db.Queries
-	client   *http.Client
+	database      *sql.DB
+	queries       *db.Queries
+	client        *http.Client
+	retentionDays int
 }
 
 func newWorker(database *sql.DB) *worker {
 	return &worker{
-		database: database,
-		queries:  db.New(database),
+		database:      database,
+		queries:       db.New(database),
+		retentionDays: 30,
 		client: &http.Client{
 			Timeout:       probeTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -78,10 +80,21 @@ func (w *worker) cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	recovered, err := queries.RecoverAbandoned(ctx, now-(6*time.Minute).Milliseconds(), now)
+	if err != nil {
+		return err
+	}
+	var pruned int64
+	if w.retentionDays > 0 {
+		pruned, err = queries.PruneRequestHistory(ctx, now-int64(w.retentionDays)*24*time.Hour.Milliseconds())
+		if err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	slog.Info("auth cleanup completed", "sessions", sessions, "tokens", tokens)
+	slog.Info("maintenance completed", "sessions", sessions, "tokens", tokens, "recovered_requests", recovered, "pruned_requests", pruned)
 	return nil
 }
 

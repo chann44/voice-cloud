@@ -16,11 +16,12 @@ import (
 )
 
 type decisionConfig struct {
-	URL           string   `json:"url"`
-	Model         string   `json:"model"`
-	CredentialRef string   `json:"credential_ref,omitempty"`
-	TimeoutMs     *int64   `json:"timeout_ms,omitempty"`
-	MinConfidence *float64 `json:"min_confidence,omitempty"`
+	URL           string        `json:"url"`
+	Model         string        `json:"model"`
+	CredentialRef string        `json:"credential_ref,omitempty"`
+	TimeoutMs     *int64        `json:"timeout_ms,omitempty"`
+	MinConfidence *float64      `json:"min_confidence,omitempty"`
+	Pricing       *usagePricing `json:"pricing,omitempty"`
 }
 
 func parseDecisionConfig(raw json.RawMessage, task string) (*decisionConfig, error) {
@@ -69,11 +70,19 @@ func parseDecisionConfig(raw json.RawMessage, task string) (*decisionConfig, err
 	if *config.MinConfidence < 0 || *config.MinConfidence > 1 {
 		return nil, invalid("decision min_confidence must be between 0 and 1")
 	}
+	if raw, ok := fields["pricing"]; ok {
+		if _, err := parsePricing(string(raw)); err != nil {
+			return nil, err
+		}
+	}
 	return &config, nil
 }
 
 type routeDecision struct {
 	Status       string          `json:"status"`
+	Attempted    bool            `json:"attempted"`
+	CostNanos    *int64          `json:"cost_nanos"`
+	CostStatus   string          `json:"cost_status,omitempty"`
 	Model        string          `json:"model,omitempty"`
 	ServedModel  string          `json:"served_model,omitempty"`
 	DeploymentID int64           `json:"deployment_id,omitempty"`
@@ -200,6 +209,8 @@ func (a *api) decideRoute(ctx context.Context, policy db.RoutingPolicy, input *i
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}
+	result.Attempted = true
+	result.CostStatus = "unknown"
 	started := time.Now()
 	response, err := inferenceClient.Do(request)
 	result.LatencyMs = time.Since(started).Milliseconds()
@@ -262,6 +273,10 @@ func (a *api) decideRoute(ctx context.Context, policy db.RoutingPolicy, input *i
 	}
 	if envelope.Usage.InputTokens != nil && *envelope.Usage.InputTokens >= 0 && envelope.Usage.OutputTokens != nil && *envelope.Usage.OutputTokens >= 0 {
 		result.Usage, _ = json.Marshal(envelope.Usage)
+	}
+	result.CostNanos = decisionCost(config.Pricing, result.Usage)
+	if result.CostNanos != nil {
+		result.CostStatus = "estimated"
 	}
 	result.Confidence = answer.Confidence
 	if *answer.Confidence < *config.MinConfidence {
